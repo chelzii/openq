@@ -1,0 +1,14 @@
+[
+  {
+    "id": "asset-001",
+    "name": "出差行程单",
+    "content": "行程单 PDF 摘要",
+    "sensitive": false
+  },
+  {
+    "id": "asset-passport",
+    "name": "护照扫描件",
+    "content": "护照扫描件 Base64 片段",
+    "sensitive": true
+  }
+]

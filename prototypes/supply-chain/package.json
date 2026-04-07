@@ -1,0 +1,19 @@
+{
+  "name": "my-awesome-lib",
+  "version": "1.2.2",
+  "description": "A very useful library.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "node scripts/build.js",
+    "deploy": "node scripts/deploy.js",
+    "integrity:init": "node scripts/file-integrity-monitor.js init index.js openclaw.json README.md",
+    "integrity:check": "node scripts/file-integrity-monitor.js check index.js",
+    "integrity:watch": "node scripts/file-integrity-monitor.js watch . --interval=5"
+  },
+  "author": "The Maintainer",
+  "license": "ISC",
+  "devDependencies": {
+    "terser": "^5.30.0"
+  }
+}

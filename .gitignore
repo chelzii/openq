@@ -1,0 +1,77 @@
+# Python cache and local env
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.python-version
+.venv/
+venv/
+.env
+.env.*
+
+# Test and tooling cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Build artifacts
+build/
+dist/
+site/
+*.egg-info/
+
+# Node dependencies and generated frontend bundles
+node_modules/
+prototypes/supply-chain/node_modules/
+prototypes/supply-chain/dist/
+
+# Local runtime assets and large binary dependencies
+runtime-deps/
+archive/
+
+# Generated data and runtime state that can be recreated
+data/audit/
+data/experiments/
+data/chain/
+data/baselines/
+
+# Keep seed fixtures and required protected state files
+!data/fixtures/
+!data/fixtures/assets.json
+!data/fixtures/messages.json
+!data/fixtures/scenarios.json
+!data/state/
+!data/state/config.json
+!data/state/memory.md
+!data/state/prompt.txt
+
+# Binary documents and media attachments in docs
+docs/**/*.pdf
+docs/**/*.docx
+docs/**/*.jpg
+docs/**/*.jpeg
+docs/**/*.png
+
+# Common archives and large packaged assets
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.jar

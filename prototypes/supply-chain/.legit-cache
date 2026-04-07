@@ -1,0 +1,1 @@
+function doSomethingAwesome(){return console.log("Doing something awesome and safe!"),!0}module.exports={doSomethingAwesome:doSomethingAwesome};

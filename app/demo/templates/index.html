@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenQ Demo Console</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <p class="eyebrow">OpenClaw + Multi App + Dual Defense</p>
+        <h1>OpenQ 虚拟终端安全演示台</h1>
+        <p class="lede">统一网关、动态意图护栏、真实 FISCO 链状态探测、受保护状态写入和实验统计全部收敛到同一套主工程里。</p>
+      </div>
+      <div class="stack">
+        <div class="identity-card">
+          <div class="label">Demo DID</div>
+          <div class="value">{{ identity.did }}</div>
+          <div class="label">Signer</div>
+          <div class="value">{{ identity.label }}</div>
+        </div>
+        <div class="identity-card">
+          <div class="label">Chain Backend</div>
+          <div class="value" id="chain-backend">{{ chain_status.backend }}</div>
+          <div class="label">Chain Status</div>
+          <div class="value" id="chain-status">{{ "available" if chain_status.available else "offline" }}</div>
+          <div class="label">Latest Block</div>
+          <div class="value" id="chain-block">{{ chain_status.block_number or "N/A" }}</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <h2>运行场景</h2>
+        <label for="scenario">场景</label>
+        <select id="scenario">
+          {% for scenario in scenarios %}
+          <option value="{{ scenario.scenario_id }}">{{ scenario.title }}</option>
+          {% endfor %}
+        </select>
+        <label for="user-task-override">任务输入</label>
+        <textarea id="user-task-override" rows="4"></textarea>
+        <p id="scenario-meta" class="inline-note"></p>
+        <label for="mode">模式</label>
+        <select id="mode">
+          <option value="off">off</option>
+          <option value="guard_only">guard_only</option>
+          <option value="full" selected>full</option>
+        </select>
+        <label class="checkbox">
+          <input id="use-real-openclaw" type="checkbox">
+          尝试连接真实 OpenClaw
+        </label>
+        <button id="run-demo">运行场景</button>
+        <pre id="demo-output" class="output">等待运行结果...</pre>
+      </article>
+
+      <article class="panel">
+        <h2>批量实验</h2>
+        <p>一键在三种模式下运行全部样本，输出拦截率、误报率、平均延迟和导出文件路径。</p>
+        <button id="run-experiments">运行消融实验</button>
+        <pre id="experiment-output" class="output">等待实验结果...</pre>
+      </article>
+    </section>
+
+    <section class="grid two">
+      <article class="panel">
+        <h2>受保护状态</h2>
+        <label for="state-target">目标</label>
+        <select id="state-target">
+          {% for target, _ in state_targets.items() %}
+          <option value="{{ target }}">{{ target }}</option>
+          {% endfor %}
+        </select>
+        <label for="state-content">内容</label>
+        <textarea id="state-content" rows="10">{% for target, content in state_targets.items() %}{% if loop.first %}{{ content }}{% endif %}{% endfor %}</textarea>
+        <label for="approval-token">审批令牌</label>
+        <input id="approval-token" type="text" placeholder="高危修改时输入 APPROVED">
+        <button id="submit-state">提交状态修改</button>
+        <pre id="state-output" class="output">等待状态修改结果...</pre>
+      </article>
+
+      <article class="panel">
+        <h2>最近审计</h2>
+        <div id="audit-list" class="audit-list">
+          {% for item in recent_audit %}
+          <div class="audit-item">
+            <div>{{ item.request_id }}</div>
+            <div>{{ item.status }} / {{ item.blocked_layer or "none" }}</div>
+            <div>{{ item.app }}.{{ item.action }}</div>
+            <div>{{ item.message }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        <div class="button-row">
+          <button id="refresh-audit">刷新审计</button>
+          <button id="refresh-chain">刷新链状态</button>
+        </div>
+        <div id="state-drift" class="inline-note">等待状态漂移检查...</div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const scenarios = {{ scenario_payloads|tojson }};
+    const scenarioMap = Object.fromEntries(scenarios.map((item) => [item.scenario_id, item]));
+    const scenarioSelect = document.getElementById("scenario");
+    const userTaskOverride = document.getElementById("user-task-override");
+    const scenarioMeta = document.getElementById("scenario-meta");
+    const modeSelect = document.getElementById("mode");
+    const runDemoButton = document.getElementById("run-demo");
+    const demoOutput = document.getElementById("demo-output");
+    const experimentButton = document.getElementById("run-experiments");
+    const experimentOutput = document.getElementById("experiment-output");
+    const stateTarget = document.getElementById("state-target");
+    const stateContent = document.getElementById("state-content");
+    const approvalToken = document.getElementById("approval-token");
+    const stateOutput = document.getElementById("state-output");
+    const useRealOpenClaw = document.getElementById("use-real-openclaw");
+    const refreshAuditButton = document.getElementById("refresh-audit");
+    const refreshChainButton = document.getElementById("refresh-chain");
+    const auditList = document.getElementById("audit-list");
+    const stateDrift = document.getElementById("state-drift");
+    const chainBackend = document.getElementById("chain-backend");
+    const chainStatus = document.getElementById("chain-status");
+    const chainBlock = document.getElementById("chain-block");
+
+    async function postJson(url, payload) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+      return await response.json();
+    }
+
+    function syncScenarioView(resetTask = false) {
+      const scenario = scenarioMap[scenarioSelect.value];
+      if (!scenario) {
+        return;
+      }
+      scenarioMeta.textContent = `${scenario.description} | 预期: off=${scenario.expected_by_mode.off}, guard_only=${scenario.expected_by_mode.guard_only}, full=${scenario.expected_by_mode.full}`;
+      if (resetTask || !userTaskOverride.value.trim()) {
+        userTaskOverride.value = scenario.user_task;
+      }
+    }
+
+    async function refreshChainStatus() {
+      const result = await fetch("/api/chain/status").then((resp) => resp.json());
+      chainBackend.textContent = result.backend;
+      chainStatus.textContent = result.available ? "available" : `offline: ${result.message}`;
+      chainBlock.textContent = result.block_number ?? "N/A";
+    }
+
+    async function refreshStateSnapshot() {
+      const snapshot = await fetch("/api/state").then((resp) => resp.json());
+      if (snapshot.drift.length) {
+        stateDrift.textContent = `检测到 ${snapshot.drift.length} 个受保护状态偏离基线，请优先检查。`;
+      } else {
+        stateDrift.textContent = "当前共享提示词、记忆和配置均与基线一致。";
+      }
+      if (stateTarget.value) {
+        stateContent.value = snapshot.targets[stateTarget.value] || "";
+      }
+    }
+
+    runDemoButton.addEventListener("click", async () => {
+      demoOutput.textContent = "运行中...";
+      const payload = {
+        scenario_id: scenarioSelect.value,
+        mode: modeSelect.value,
+        use_real_openclaw: useRealOpenClaw.checked,
+        user_task_override: userTaskOverride.value || null
+      };
+      const result = await postJson("/api/demo/run", payload);
+      demoOutput.textContent = JSON.stringify(result, null, 2);
+    });
+
+    experimentButton.addEventListener("click", async () => {
+      experimentOutput.textContent = "运行中...";
+      const result = await postJson("/api/experiments/run", {});
+      experimentOutput.textContent = JSON.stringify(result, null, 2);
+    });
+
+    stateTarget.addEventListener("change", async () => {
+      await refreshStateSnapshot();
+    });
+
+    document.getElementById("submit-state").addEventListener("click", async () => {
+      stateOutput.textContent = "提交中...";
+      const result = await postJson("/api/state/update", {
+        target: stateTarget.value,
+        content: stateContent.value,
+        mode: modeSelect.value,
+        approval_token: approvalToken.value || null
+      });
+      stateOutput.textContent = JSON.stringify(result, null, 2);
+      await refreshStateSnapshot();
+    });
+
+    refreshAuditButton.addEventListener("click", async () => {
+      const result = await fetch("/api/audit/recent").then((resp) => resp.json());
+      auditList.innerHTML = "";
+      result.audit.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "audit-item";
+        row.innerHTML = `<div>${item.request_id}</div><div>${item.status} / ${item.blocked_layer || "none"}</div><div>${item.app}.${item.action}</div><div>${item.message}</div>`;
+        auditList.appendChild(row);
+      });
+    });
+
+    refreshChainButton.addEventListener("click", refreshChainStatus);
+    scenarioSelect.addEventListener("change", () => syncScenarioView(true));
+
+    syncScenarioView(true);
+    refreshStateSnapshot();
+  </script>
+</body>
+</html>
