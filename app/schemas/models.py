@@ -40,6 +40,22 @@ class CallAppRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class OpenClawToolCall(BaseModel):
+    tool_name: str = "call_app_api"
+    resource_type: ResourceType
+    app: str
+    action: str
+    args: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class OpenClawPlan(BaseModel):
+    assistant_reply: str
+    calls: list[OpenClawToolCall]
+    backend: str
+    raw_response: str | None = None
+
+
 class GuardDecision(BaseModel):
     allowed: bool
     risk_type: str
@@ -66,6 +82,7 @@ class AuthResult(BaseModel):
     permission_key: str
     chain_available: bool
     block_number: int | None = None
+    degraded_allowed: bool = False
 
 
 class ProtectedStateDiff(BaseModel):
@@ -77,6 +94,10 @@ class ProtectedStateDiff(BaseModel):
     suspicious: bool
     approval_required: bool
     approval_granted: bool
+    approval_token: str | None = None
+    approval_status: str | None = None
+    approval_decision_by: str | None = None
+    approval_note: str | None = None
     baseline_drift_detected: bool = False
     risk_labels: list[str] = Field(default_factory=list)
     rollback_performed: bool = False
@@ -119,6 +140,9 @@ class CallAppResponse(BaseModel):
     audit: AuditView | None = None
     state_change: ProtectedStateDiff | None = None
     latency_ms: float
+    permission_key: str | None = None
+    risk_level: str | None = None
+    approval_required: bool = False
 
 
 class ScenarioStep(BaseModel):
@@ -157,21 +181,40 @@ class DemoRunRequest(BaseModel):
     user_task_override: str | None = None
 
 
-class ManualStateUpdateRequest(BaseModel):
+class ApprovalDecisionRequest(BaseModel):
+    token: str
+    decision: str = Field(pattern="^(approve|reject)$")
+    approver_did: str
+    note: str = ""
+
+
+class ApprovalView(BaseModel):
+    token: str
+    request_id: str
+    payload_hash: str
     target: str
-    content: str
-    mode: Mode
-    approval_token: str | None = None
+    diff: str
+    risk_labels: list[str] = Field(default_factory=list)
+    status: str
+    issued_at: str
+    decided_at: str | None = None
+    decision_by: str | None = None
+    decision_note: str | None = None
 
 
 class DemoRunResponse(BaseModel):
     scenario: ScenarioDefinition
     mode: Mode
     assistant_reply: str
+    openclaw_plan: OpenClawPlan
     traces: list[ExecutionTrace]
     final_status: str
     blocked_layer: str | None = None
     summary: str
+
+
+class ApprovalDecisionResponse(BaseModel):
+    approval: ApprovalView
 
 
 class ExperimentRecord(BaseModel):
@@ -186,25 +229,12 @@ class ExperimentRecord(BaseModel):
     false_positive: bool
     audit_written: bool
     intent_similarity: float | None = None
+    reranker_score: float | None = None
+    permission_key: str | None = None
+    reason: str | None = None
     chain_backend: str | None = None
     chain_available: bool | None = None
     state_alert: bool = False
-
-
-class ExperimentAggregate(BaseModel):
-    mode: Mode
-    total: int
-    blocked: int
-    executed: int
-    correct: int
-    false_positive_rate: float
-    interception_rate: float
-    state_detection_rate: float
-    avg_latency_ms: float
-
-
-class ExperimentReport(BaseModel):
-    records: list[ExperimentRecord]
-    aggregates: list[ExperimentAggregate]
-    exported_json: str
-    exported_csv: str
+    approval_required: bool = False
+    approval_granted: bool = False
+    approval_status: str | None = None
