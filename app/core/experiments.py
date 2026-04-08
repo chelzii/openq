@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import time
-import uuid
 from dataclasses import dataclass
 
-from app.chain.crypto import RequestSigner
 from app.chain.fisco import FiscoBcosService
 from app.core.openclaw import OpenClawFacade
+from app.core.request_builder import SignedCallBuilder
 from app.core.utils import read_json, write_csv, write_json
 from app.schemas import (
-    CallAppRequest,
+    CallContext,
     DemoRunRequest,
     DemoRunResponse,
     ExecutionTrace,
@@ -23,8 +22,8 @@ from app.schemas import (
 
 @dataclass
 class DemoOrchestrator:
-    signer: RequestSigner
     chain: FiscoBcosService
+    builder: SignedCallBuilder
     gateway: any
     openclaw: OpenClawFacade
     scenario_fixture: any
@@ -40,36 +39,30 @@ class DemoOrchestrator:
         scenario = self.scenario_map()[request.scenario_id].model_copy(deep=True)
         if request.user_task_override:
             scenario.user_task = request.user_task_override
-        identity = self.chain.demo_identity()
-        assistant_reply = await self.openclaw.generate_reply(scenario, request.mode.value, request.use_real_openclaw)
+        context = CallContext(
+            user_goal=scenario.user_task,
+            trusted_system_goal=scenario.trusted_system_goal,
+            source_summary=scenario.source_summary,
+            external_text=scenario.external_text,
+            scenario_id=scenario.scenario_id,
+        )
+        openclaw_plan = await self.openclaw.generate_plan(scenario, request.mode.value, request.use_real_openclaw)
         traces: list[ExecutionTrace] = []
         blocked_layer = None
         final_status = "executed"
         summary = ""
 
-        for index, step in enumerate(scenario.steps, start=1):
-            payload = {
-                "request_id": f"{scenario.scenario_id}-{request.mode.value}-{index}-{uuid.uuid4().hex[:8]}",
-                "session_id": request.session_id,
-                "mode": request.mode.value,
-                "did": identity.did,
-                "resource_type": step.resource_type.value,
-                "app": step.app,
-                "action": step.action,
-                "args": step.args,
-                "context": {
-                    "user_goal": scenario.user_task,
-                    "trusted_system_goal": scenario.trusted_system_goal,
-                    "source_summary": scenario.source_summary,
-                    "external_text": scenario.external_text,
-                    "scenario_id": scenario.scenario_id,
-                },
-                "metadata": step.metadata,
-            }
-            payload_hash = self.signer.payload_hash(payload)
-            signature = self.signer.sign_payload(payload, identity.private_key)
-            call_request = CallAppRequest.model_validate({**payload, "payload_hash": payload_hash, "signature": signature})
-            response = self.gateway.handle_call(call_request, approval_token=request.approval_token)
+        for index, call in enumerate(openclaw_plan.calls, start=1):
+            call_request = self.builder.build(
+                session_id=request.session_id,
+                mode=request.mode,
+                intent=call,
+                context=context,
+                request_id=f"{scenario.scenario_id}-{request.mode.value}-{index:02d}",
+            )
+            if request.approval_token:
+                call_request.metadata["approval_token"] = request.approval_token
+            response = self.gateway.handle_call(call_request)
             traces.append(ExecutionTrace(step_index=index, request=call_request, response=response))
             if response.status != "executed":
                 final_status = response.status
@@ -80,7 +73,8 @@ class DemoOrchestrator:
         return DemoRunResponse(
             scenario=scenario,
             mode=request.mode,
-            assistant_reply=assistant_reply,
+            assistant_reply=openclaw_plan.assistant_reply,
+            openclaw_plan=openclaw_plan,
             traces=traces,
             final_status=final_status,
             blocked_layer=blocked_layer,
@@ -121,9 +115,31 @@ class DemoOrchestrator:
                         intent_similarity=last_trace.response.guard.intent_similarity
                         if last_trace.response.guard
                         else None,
+                        reranker_score=last_trace.response.guard.reranker_score if last_trace.response.guard else None,
+                        permission_key=last_trace.response.auth.permission_key if last_trace.response.auth else None,
+                        reason=last_trace.response.message,
                         chain_backend=last_trace.response.auth.backend if last_trace.response.auth else None,
                         chain_available=last_trace.response.auth.chain_available if last_trace.response.auth else None,
                         state_alert=bool(last_trace.response.state_change and last_trace.response.state_change.suspicious),
+                        approval_required=bool(
+                            last_trace.response.state_change and last_trace.response.state_change.approval_required
+                        ),
+                        approval_granted=bool(
+                            last_trace.response.state_change and last_trace.response.state_change.approval_granted
+                        ),
+                        approval_status=last_trace.response.state_change.approval_status
+                        if last_trace.response.state_change
+                        else None,
+                        rollback_performed=bool(
+                            last_trace.response.state_change and last_trace.response.state_change.rollback_performed
+                        ),
+                        guard_decision_stage=last_trace.response.guard.decision_stage
+                        if last_trace.response.guard
+                        else None,
+                        auth_reason=last_trace.response.auth.reason if last_trace.response.auth else None,
+                        risk_level=last_trace.response.risk_level,
+                        plan_backend=response.openclaw_plan.backend,
+                        degraded_allowed=bool(last_trace.response.auth and last_trace.response.auth.degraded_allowed),
                     )
                 )
                 self._reset_state()
@@ -146,9 +162,21 @@ class DemoOrchestrator:
                 "false_positive",
                 "audit_written",
                 "intent_similarity",
+                "reranker_score",
+                "permission_key",
+                "reason",
                 "chain_backend",
                 "chain_available",
                 "state_alert",
+                "approval_required",
+                "approval_granted",
+                "approval_status",
+                "rollback_performed",
+                "guard_decision_stage",
+                "auth_reason",
+                "risk_level",
+                "plan_backend",
+                "degraded_allowed",
             ],
             [record.model_dump(mode="json") for record in records],
         )

@@ -16,18 +16,33 @@ from app.schemas import ChainStatusView
 
 CONTRACT_NAME = "OpenQRegistry"
 SEED_VERSION = 1
-DEFAULT_PERMISSIONS = {
-    "mail.list_messages": True,
-    "mail.read_message": True,
-    "bank.get_balance": True,
-    "bank.transfer": False,
-    "gallery.list_assets": True,
-    "gallery.read_asset": False,
-    "weather.get_weather": True,
-    "weather.get_alert": True,
-    "state.update_memory": True,
-    "state.update_prompt": True,
-    "state.update_config": True,
+DEFAULT_IDENTITY_PERMISSIONS = {
+    "agent": {
+        "mail.list_messages": True,
+        "mail.read_message": True,
+        "bank.get_balance": True,
+        "bank.transfer": False,
+        "gallery.list_assets": True,
+        "gallery.read_asset": False,
+        "weather.get_weather": True,
+        "weather.get_alert": True,
+        "state.update_memory": True,
+        "state.update_prompt": True,
+        "state.update_config": True,
+    },
+    "approver": {
+        "mail.list_messages": True,
+        "mail.read_message": True,
+        "bank.get_balance": True,
+        "bank.transfer": False,
+        "gallery.list_assets": True,
+        "gallery.read_asset": False,
+        "weather.get_weather": True,
+        "weather.get_alert": True,
+        "state.update_memory": True,
+        "state.update_prompt": True,
+        "state.update_config": True,
+    },
 }
 
 
@@ -68,6 +83,7 @@ class FiscoBcosService:
     ):
         self.registry_path = registry_path
         self.identity_path = identity_path
+        self.identities_path = identity_path if identity_path.name == "identities.json" else identity_path.with_name("identities.json")
         self.contract_source = contract_source
         self.console_contract_dir = console_contract_dir
         self.console_script = console_script
@@ -76,21 +92,48 @@ class FiscoBcosService:
         self._cached_status: ChainRuntimeStatus | None = None
         self._cached_at = 0.0
         self._registry_ready = False
-        self._ensure_seed_identity()
+        self._ensure_seed_identities()
 
-    def _ensure_seed_identity(self) -> None:
-        if self.identity_path.exists():
-            return
-        identity = RequestSigner.generate_identity("did:openq:agent-001", "OpenQ Demo Agent")
-        write_json(
-            self.identity_path,
-            {
-                "did": identity.did,
-                "label": identity.label,
-                "public_key": identity.public_key,
-                "private_key": identity.private_key,
-            },
-        )
+    def _ensure_seed_identities(self) -> None:
+        payload: dict[str, dict[str, str]] = {}
+        if self.identities_path.exists():
+            raw = read_json(self.identities_path, {})
+            if isinstance(raw, dict):
+                payload = {
+                    key: value
+                    for key, value in raw.items()
+                    if isinstance(value, dict) and {"did", "label", "public_key", "private_key"} <= set(value)
+                }
+
+        if not payload and self.identity_path.exists() and self.identity_path != self.identities_path:
+            legacy = read_json(self.identity_path, {})
+            if isinstance(legacy, dict) and {"did", "label", "public_key", "private_key"} <= set(legacy):
+                payload["agent"] = {
+                    "did": legacy["did"],
+                    "label": legacy["label"],
+                    "public_key": legacy["public_key"],
+                    "private_key": legacy["private_key"],
+                }
+
+        if "agent" not in payload:
+            agent = RequestSigner.generate_identity("did:openq:agent-001", "OpenQ Demo Agent")
+            payload["agent"] = {
+                "did": agent.did,
+                "label": agent.label,
+                "public_key": agent.public_key,
+                "private_key": agent.private_key,
+            }
+
+        if "approver" not in payload:
+            approver = RequestSigner.generate_identity("did:openq:approver-001", "OpenQ Approval Operator")
+            payload["approver"] = {
+                "did": approver.did,
+                "label": approver.label,
+                "public_key": approver.public_key,
+                "private_key": approver.private_key,
+            }
+
+        write_json(self.identities_path, payload)
 
     def _registry_state(self) -> dict[str, Any]:
         return read_json(
@@ -107,14 +150,30 @@ class FiscoBcosService:
     def _write_registry_state(self, payload: dict[str, Any]) -> None:
         write_json(self.registry_path, payload)
 
+    def identities(self) -> dict[str, Identity]:
+        payload = read_json(self.identities_path, {})
+        return {
+            key: Identity(
+                did=item["did"],
+                private_key=item["private_key"],
+                public_key=item["public_key"],
+                label=item["label"],
+            )
+            for key, item in payload.items()
+        }
+
+    def identity(self, key: str = "agent") -> Identity:
+        identities = self.identities()
+        identity = identities.get(key)
+        if identity is None:
+            raise KeyError(f"unknown identity key: {key}")
+        return identity
+
     def demo_identity(self) -> Identity:
-        payload = read_json(self.identity_path, {})
-        return Identity(
-            did=payload["did"],
-            private_key=payload["private_key"],
-            public_key=payload["public_key"],
-            label=payload["label"],
-        )
+        return self.identity("agent")
+
+    def approver_identity(self) -> Identity:
+        return self.identity("approver")
 
     def _sync_contract_source(self) -> None:
         if not self.contract_source.exists():
@@ -254,37 +313,38 @@ class FiscoBcosService:
         return values[0].lower() == "true", values[1].lower() == "true"
 
     def _seed_registry(self, contract_address: str) -> None:
-        identity = self.demo_identity()
-        exists, public_key, label = self._read_identity(contract_address, identity.did)
-        if not exists or public_key != identity.public_key or label != identity.label:
-            self._call_transaction_hash(
-                " ".join(
-                    [
-                        f"call {CONTRACT_NAME}",
-                        contract_address,
-                        "registerIdentity",
-                        self._quote(identity.did),
-                        self._quote(identity.public_key),
-                        self._quote(identity.label),
-                    ]
-                )
-            )
-        for permission_key, allowed in DEFAULT_PERMISSIONS.items():
-            chain_exists, chain_allowed = self._read_permission(contract_address, identity.did, permission_key)
-            if not chain_exists or chain_allowed != allowed:
-                allowed_literal = "true" if allowed else "false"
+        for identity_key, permissions in DEFAULT_IDENTITY_PERMISSIONS.items():
+            identity = self.identity(identity_key)
+            exists, public_key, label = self._read_identity(contract_address, identity.did)
+            if not exists or public_key != identity.public_key or label != identity.label:
                 self._call_transaction_hash(
                     " ".join(
                         [
                             f"call {CONTRACT_NAME}",
                             contract_address,
-                            "setPermission",
+                            "registerIdentity",
                             self._quote(identity.did),
-                            self._quote(permission_key),
-                            allowed_literal,
+                            self._quote(identity.public_key),
+                            self._quote(identity.label),
                         ]
                     )
                 )
+            for permission_key, allowed in permissions.items():
+                chain_exists, chain_allowed = self._read_permission(contract_address, identity.did, permission_key)
+                if not chain_exists or chain_allowed != allowed:
+                    allowed_literal = "true" if allowed else "false"
+                    self._call_transaction_hash(
+                        " ".join(
+                            [
+                                f"call {CONTRACT_NAME}",
+                                contract_address,
+                                "setPermission",
+                                self._quote(identity.did),
+                                self._quote(permission_key),
+                                allowed_literal,
+                            ]
+                        )
+                    )
         state = self._registry_state()
         state["seed_version"] = SEED_VERSION
         self._write_registry_state(state)

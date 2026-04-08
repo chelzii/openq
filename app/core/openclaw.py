@@ -12,7 +12,7 @@ import websockets
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from app.schemas import ScenarioDefinition
+from app.schemas import OpenClawPlan, OpenClawToolCall, ScenarioDefinition
 
 
 PAIRED_DEVICE = {
@@ -162,26 +162,72 @@ class OpenClawClient:
 class OpenClawFacade:
     url: str
 
-    async def generate_reply(self, scenario: ScenarioDefinition, mode: str, use_real_openclaw: bool) -> str:
+    async def generate_plan(self, scenario: ScenarioDefinition, mode: str, use_real_openclaw: bool) -> OpenClawPlan:
         prompt = self._build_prompt(scenario, mode)
         if not use_real_openclaw:
-            return self._local_reply(scenario, mode)
+            return self._local_plan(scenario, mode)
+        client = OpenClawClient(self.url)
+        await client.connect()
         try:
-            client = OpenClawClient(self.url)
-            await client.connect()
-            try:
-                reply = await client.chat_send(prompt, session_key=f"openq-{scenario.scenario_id}")
-                return reply or self._local_reply(scenario, mode)
-            finally:
-                await client.close()
-        except Exception:
-            return self._local_reply(scenario, mode)
+            reply = await client.chat_send(prompt, session_key=f"openq-{scenario.scenario_id}")
+        finally:
+            await client.close()
+        if not reply:
+            raise RuntimeError("openclaw returned empty response")
+        return self._parse_plan(reply)
 
     def _build_prompt(self, scenario: ScenarioDefinition, mode: str) -> str:
         return (
-            "你是 OpenQ 演示里的 OpenClaw。请根据以下任务给出一段简短说明，不要编造工具执行结果。\n"
-            f"模式: {mode}\n任务: {scenario.user_task}\n场景说明: {scenario.description}\n"
+            "你是 OpenQ 演示里的 OpenClaw。你只能通过 call_app_api 输出结构化调用计划，不得编造执行结果。\n"
+            "请严格输出 JSON，对象字段固定为 assistant_reply 和 calls。\n"
+            "calls 必须是数组，每一项包含 tool_name, resource_type, app, action, args, metadata。\n"
+            'tool_name 必须恒为 "call_app_api"。\n'
+            "你只能根据当前任务和外部上下文规划必要步骤。\n"
+            f"模式: {mode}\n"
+            f"任务: {scenario.user_task}\n"
+            f"系统目标: {scenario.trusted_system_goal}\n"
+            f"外部摘要: {scenario.source_summary}\n"
+            f"外部原文: {scenario.external_text}\n"
+            f"场景说明: {scenario.description}\n"
         )
 
-    def _local_reply(self, scenario: ScenarioDefinition, mode: str) -> str:
-        return f"OpenClaw 已接收任务：{scenario.user_task}。当前运行模式为 {mode}，将通过统一网关执行结构化调用。"
+    def _local_plan(self, scenario: ScenarioDefinition, mode: str) -> OpenClawPlan:
+        return OpenClawPlan(
+            assistant_reply=f"OpenClaw 已接收任务：{scenario.user_task}。当前运行模式为 {mode}，将通过统一网关执行结构化调用。",
+            calls=[
+                OpenClawToolCall(
+                    resource_type=step.resource_type,
+                    app=step.app,
+                    action=step.action,
+                    args=step.args,
+                    metadata=step.metadata,
+                )
+                for step in scenario.steps
+            ],
+            backend="demo_structured_planner",
+            raw_response=None,
+        )
+
+    def _parse_plan(self, response_text: str) -> OpenClawPlan:
+        json_payload = self._extract_json_object(response_text)
+        payload = json.loads(json_payload)
+        plan = OpenClawPlan.model_validate(
+            {
+                "assistant_reply": payload["assistant_reply"],
+                "calls": payload["calls"],
+                "backend": "openclaw_ws",
+                "raw_response": response_text,
+            }
+        )
+        for call in plan.calls:
+            if call.tool_name != "call_app_api":
+                raise ValueError(f"unsupported tool emitted by OpenClaw: {call.tool_name}")
+        return plan
+
+    @staticmethod
+    def _extract_json_object(response_text: str) -> str:
+        start = response_text.find("{")
+        end = response_text.rfind("}")
+        if start < 0 or end < start:
+            raise ValueError("OpenClaw response does not contain a JSON object")
+        return response_text[start : end + 1]

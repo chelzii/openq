@@ -8,6 +8,8 @@ from app.apps.services import BankApp, GalleryApp, MailApp, ProtectedStateStore,
 from app.audit.service import AuditService
 from app.chain.crypto import RequestSigner
 from app.chain.fisco import FiscoBcosService
+from app.core.actions import get_action_spec
+from app.core.request_builder import signed_payload_from_request
 from app.guards.intent import IntentGuard
 from app.schemas import AppCallResult, AuditView, AuthResult, CallAppRequest, CallAppResponse, Mode, ResourceType
 from app.state.store import StateIntegrityService
@@ -22,44 +24,51 @@ class SandboxDispatcher:
     state_store: ProtectedStateStore
     integrity: StateIntegrityService
 
-    def execute(self, request: CallAppRequest, approval_token: str | None = None) -> tuple[AppCallResult, Any | None]:
+    def __post_init__(self) -> None:
+        self._executors = {
+            "mail.list_messages": lambda request: self.mail.list_messages(),
+            "mail.read_message": lambda request: self.mail.read_message(request.args["message_id"]),
+            "bank.get_balance": lambda request: self.bank.get_balance(request.args.get("account", "demo-user")),
+            "bank.transfer": lambda request: self.bank.transfer(
+                target_account=request.args["target_account"],
+                amount=float(request.args["amount"]),
+                memo=request.args.get("memo", ""),
+                transfer_limit=float(self.state_store.system_config().get("transfer_limit", 2000)),
+            ),
+            "gallery.list_assets": lambda request: self.gallery.list_assets(),
+            "gallery.read_asset": lambda request: self.gallery.read_asset(request.args["asset_id"]),
+            "weather.get_weather": lambda request: self.weather.get_weather(request.args["city"]),
+            "weather.get_alert": lambda request: self.weather.get_alert(request.args["city"]),
+        }
+
+    def execute(self, request: CallAppRequest) -> tuple[AppCallResult, Any | None]:
+        request = self._validated_request(request)
         if request.resource_type == ResourceType.APP:
             return self._execute_app(request), None
-        return self._execute_state(request, approval_token)
+        return self._execute_state(request)
+
+    def _validated_request(self, request: CallAppRequest) -> CallAppRequest:
+        spec = get_action_spec(request.app, request.action)
+        args = spec.validate_request(request)
+        return request.model_copy(update={"args": args})
 
     def _execute_app(self, request: CallAppRequest) -> AppCallResult:
-        config = self.state_store.system_config()
-        if request.app == "mail":
-            if request.action == "list_messages":
-                return self.mail.list_messages()
-            if request.action == "read_message":
-                return self.mail.read_message(request.args["message_id"])
-        if request.app == "bank":
-            if request.action == "get_balance":
-                return self.bank.get_balance(request.args.get("account", "demo-user"))
-            if request.action == "transfer":
-                return self.bank.transfer(
-                    target_account=request.args["target_account"],
-                    amount=float(request.args["amount"]),
-                    memo=request.args.get("memo", ""),
-                    transfer_limit=float(config.get("transfer_limit", 2000)),
-                )
-        if request.app == "gallery":
-            if request.action == "list_assets":
-                return self.gallery.list_assets()
-            if request.action == "read_asset":
-                return self.gallery.read_asset(request.args["asset_id"])
-        if request.app == "weather":
-            if request.action == "get_weather":
-                return self.weather.get_weather(request.args["city"])
-            if request.action == "get_alert":
-                return self.weather.get_alert(request.args["city"])
-        raise ValueError(f"unsupported app action: {request.app}.{request.action}")
+        permission_key = self.permission_key(request)
+        executor = self._executors.get(permission_key)
+        if executor is None:
+            raise ValueError(f"unsupported app action: {permission_key}")
+        return executor(request)
 
-    def _execute_state(self, request: CallAppRequest, approval_token: str | None) -> tuple[AppCallResult, Any]:
+    def _execute_state(self, request: CallAppRequest) -> tuple[AppCallResult, Any]:
         target = request.args["target"]
         new_content = request.args["content"]
-        diff = self.integrity.inspect_change(target, new_content, approval_token)
+        diff = self.integrity.inspect_change(
+            target,
+            new_content,
+            request_id=request.request_id,
+            payload_hash=request.payload_hash,
+            approval_token=str(request.metadata.get("approval_token", "")) or None,
+        )
         if request.mode == Mode.OFF:
             self.state_store.write(target, new_content)
             diff.applied = True
@@ -81,7 +90,7 @@ class SandboxDispatcher:
 
     @staticmethod
     def permission_key(request: CallAppRequest) -> str:
-        return f"{request.app}.{request.action}"
+        return get_action_spec(request.app, request.action).permission_key
 
 
 @dataclass
@@ -92,7 +101,7 @@ class GatewayService:
     dispatcher: SandboxDispatcher
     audit: AuditService
 
-    def handle_call(self, request: CallAppRequest, approval_token: str | None = None) -> CallAppResponse:
+    def handle_call(self, request: CallAppRequest) -> CallAppResponse:
         started = time.perf_counter()
         guard_decision = None
         auth_result = None
@@ -101,13 +110,17 @@ class GatewayService:
         message = "request executed"
         result = None
         state_change = None
-        permission_key = self.dispatcher.permission_key(request)
+        permission_key = None
+        spec = None
 
         try:
-            signed_payload = request.model_dump(exclude={"signature", "payload_hash"})
+            spec = get_action_spec(request.app, request.action)
+            permission_key = spec.permission_key
+            signed_payload = signed_payload_from_request(request)
             expected_hash = self.signer.payload_hash(signed_payload)
             if request.payload_hash != expected_hash:
                 raise ValueError("payload hash mismatch")
+            request = self.dispatcher._validated_request(request)
             config = self.dispatcher.state_store.system_config()
             if "guard_threshold_override" in config:
                 self.guard.threshold = float(config["guard_threshold_override"])
@@ -140,8 +153,12 @@ class GatewayService:
                     permission_key=auth.permission_key,
                     chain_available=auth.chain_available,
                     block_number=auth.block_number,
+                    degraded_allowed=False,
                 )
-                if not auth.verified or not auth.permission_allowed:
+                if not auth.chain_available and spec and not spec.fail_closed_on_chain_error:
+                    auth_result.degraded_allowed = True
+                    auth_result.reason = "chain unavailable, degraded allow for read-only action"
+                elif not auth.verified or not auth.permission_allowed:
                     blocked_layer = "chain"
                     status = "blocked"
                     message = auth.reason
@@ -157,13 +174,19 @@ class GatewayService:
                         state_change=None,
                     )
 
-            result, state_change = self.dispatcher.execute(request, approval_token)
+            result, state_change = self.dispatcher.execute(request)
             if state_change and not state_change.applied:
                 blocked_layer = "state"
                 status = "blocked"
-                message = "protected state update requires approval"
+                message = (
+                    "protected state update was rejected"
+                    if state_change.approval_status == "rejected"
+                    else "protected state update requires approval"
+                )
             elif state_change:
                 message = "protected state updated"
+            elif auth_result and auth_result.degraded_allowed:
+                message = "request executed under degraded chain policy"
 
             return self._build_response(
                 request,
@@ -175,6 +198,9 @@ class GatewayService:
                 guard=guard_decision,
                 auth=auth_result,
                 state_change=state_change,
+                permission_key=permission_key,
+                risk_level=spec.risk_level if spec else None,
+                approval_required=bool(spec.approval_required if spec else False),
             )
         except Exception as exc:
             return self._build_response(
@@ -187,6 +213,9 @@ class GatewayService:
                 guard=guard_decision,
                 auth=auth_result,
                 state_change=state_change,
+                permission_key=permission_key,
+                risk_level=spec.risk_level if spec else None,
+                approval_required=bool(spec.approval_required if spec else False),
             )
 
     def _build_response(
@@ -201,6 +230,9 @@ class GatewayService:
         guard: Any,
         auth: Any,
         state_change: Any,
+        permission_key: str | None = None,
+        risk_level: str | None = None,
+        approval_required: bool = False,
     ) -> CallAppResponse:
         latency_ms = round((time.perf_counter() - started) * 1000, 2)
         audit_entry = self.audit.record(
@@ -216,10 +248,13 @@ class GatewayService:
                 "blocked_layer": blocked_layer,
                 "message": message,
                 "user_goal": request.context.user_goal,
+                "permission_key": permission_key,
+                "risk_level": risk_level,
+                "approval_required": approval_required,
                 "guard": guard.model_dump() if guard else None,
                 "auth": auth.model_dump() if auth else None,
                 "result": result.model_dump() if result else None,
-                "state_change": state_change.model_dump() if state_change else None,
+                "state_change": state_change.model_dump(exclude={"approval_token"}) if state_change else None,
                 "latency_ms": latency_ms,
             }
         )
@@ -227,16 +262,19 @@ class GatewayService:
         chain_backend = None
         chain_block_number = None
         if request.mode == Mode.FULL:
-            chain_receipt, chain_block_number, chain_backend = self.chain.record_audit(
-                request.request_id,
-                {
-                    "status": status,
-                    "blocked_layer": blocked_layer,
-                    "app": request.app,
-                    "action": request.action,
-                    "message": message,
-                },
-            )
+            try:
+                chain_receipt, chain_block_number, chain_backend = self.chain.record_audit(
+                    request.request_id,
+                    {
+                        "status": status,
+                        "blocked_layer": blocked_layer,
+                        "app": request.app,
+                        "action": request.action,
+                        "message": message,
+                    },
+                )
+            except Exception as exc:
+                chain_backend = f"audit_unavailable:{type(exc).__name__}"
         return CallAppResponse(
             request_id=request.request_id,
             mode=request.mode,
@@ -257,4 +295,7 @@ class GatewayService:
             ),
             state_change=state_change,
             latency_ms=latency_ms,
+            permission_key=permission_key,
+            risk_level=risk_level,
+            approval_required=approval_required,
         )
