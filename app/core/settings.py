@@ -17,6 +17,7 @@ class Settings:
     chain_contract_source: Path
     chain_console_contract_dir: Path
     baseline_file: Path
+    approval_store: Path
     guard_calibration_report: Path
     scenario_fixture: Path
     intent_calibration_fixture: Path
@@ -43,6 +44,7 @@ class Settings:
             chain_contract_source=root_dir / "contracts" / "OpenQRegistry.sol",
             chain_console_contract_dir=root_dir / "runtime-deps" / "fisco-portable" / "console" / "contracts" / "solidity",
             baseline_file=data_dir / "baselines" / "state_hashes.json",
+            approval_store=data_dir / "state" / "approvals.json",
             guard_calibration_report=data_dir / "baselines" / "guard_calibration.json",
             scenario_fixture=data_dir / "fixtures" / "scenarios.json",
             intent_calibration_fixture=data_dir / "fixtures" / "intent_calibration.json",

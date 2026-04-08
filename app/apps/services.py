@@ -42,10 +42,14 @@ class BankApp:
         )
 
     def transfer(self, target_account: str, amount: float, memo: str = "", transfer_limit: float = 2000) -> AppCallResult:
-        if not target_account.strip():
+        target_account = target_account.strip()
+        memo = memo.strip()
+        if not target_account:
             raise ValueError("target account is required")
         if amount <= 0 or amount > transfer_limit:
             raise ValueError("transfer amount out of allowed range")
+        if len(memo) > 120:
+            raise ValueError("memo exceeds allowed length")
         source = "demo-user"
         if self._accounts[source] < amount:
             raise ValueError("insufficient balance")
@@ -79,7 +83,8 @@ class GalleryApp:
 
     def read_asset(self, asset_id: str) -> AppCallResult:
         asset = next(item for item in self._assets() if item["id"] == asset_id)
-        return AppCallResult(summary=f"已读取资源 {asset['name']}", data=asset)
+        sensitivity = "high" if "passport" in asset_id or "id" in asset["name"].lower() else "normal"
+        return AppCallResult(summary=f"已读取资源 {asset['name']}", data={**asset, "sensitivity": sensitivity})
 
 
 class WeatherApp:

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from app.schemas import CallAppRequest, DemoRunRequest, ManualStateUpdateRequest
+from app.schemas import ApprovalDecisionRequest, CallAppRequest, DemoRunRequest
 
 
 def build_router(templates: Jinja2Templates) -> APIRouter:
@@ -23,7 +23,9 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
                 "recent_audit": app_state.audit.recent(12),
                 "state_targets": app_state.state_store.list_targets(),
                 "identity": app_state.chain.demo_identity(),
+                "approver_identity": app_state.chain.approver_identity(),
                 "chain_status": app_state.chain.status_view(force_refresh=True),
+                "pending_approvals": [item.model_dump(mode="json") for item in app_state.approvals.list_pending()],
             },
         )
 
@@ -42,36 +44,35 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
         return response.model_dump(mode="json")
 
     @router.post("/api/state/update")
-    async def update_state(request: Request, payload: ManualStateUpdateRequest) -> dict:
-        container = request.app.state.container
-        identity = container.chain.demo_identity()
-        signed_payload = {
-            "request_id": f"manual-state-{__import__('time').time_ns()}",
-            "session_id": "manual-state",
-            "mode": payload.mode.value,
-            "did": identity.did,
-            "resource_type": "state",
-            "app": "state",
-            "action": "update_memory"
-            if payload.target.startswith("memory/")
-            else "update_prompt"
-            if payload.target.startswith("prompt/")
-            else "update_config",
-            "args": {"target": payload.target, "content": payload.content},
-            "context": {
-                "user_goal": "手动更新受保护状态",
-                "trusted_system_goal": "update_protected_state",
-                "source_summary": "",
-                "external_text": "",
-                "scenario_id": None,
-            },
-            "metadata": {},
-        }
-        payload_hash = container.signer.payload_hash(signed_payload)
-        signature = container.signer.sign_payload(signed_payload, identity.private_key)
-        call = CallAppRequest.model_validate({**signed_payload, "payload_hash": payload_hash, "signature": signature})
-        response = container.gateway.handle_call(call, approval_token=payload.approval_token)
+    async def update_state(request: Request, payload: CallAppRequest) -> dict:
+        if payload.resource_type.value != "state" or payload.app != "state":
+            raise HTTPException(status_code=400, detail="state update endpoint only accepts resource_type=state requests")
+        response = request.app.state.container.gateway.handle_call(payload)
         return response.model_dump(mode="json")
+
+    @router.get("/api/approvals/pending")
+    async def pending_approvals(request: Request) -> dict:
+        container = request.app.state.container
+        return {"items": [item.model_dump(mode="json") for item in container.approvals.list_pending()]}
+
+    @router.post("/api/approvals/decision")
+    async def decide_approval(request: Request, payload: ApprovalDecisionRequest) -> dict:
+        container = request.app.state.container
+        approver = container.chain.approver_identity()
+        if payload.approver_did != approver.did:
+            raise HTTPException(status_code=403, detail="approval decision must be submitted by the registered approver DID")
+        approval = container.approvals.decide(payload.token, payload.decision, payload.approver_did, payload.note)
+        container.audit.record_approval(
+            {
+                "request_id": approval.request_id,
+                "approval_token": approval.token,
+                "status": approval.status,
+                "target": approval.target,
+                "decision_by": approval.decision_by,
+                "decision_note": approval.decision_note,
+            }
+        )
+        return {"approval": approval.model_dump(mode="json")}
 
     @router.post("/api/experiments/run")
     async def run_experiments(request: Request) -> dict:

@@ -35,3 +35,6 @@ class AuditService:
 
     def export_snapshot(self, path: Path) -> None:
         write_json(path, self.recent(500))
+
+    def record_approval(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.record({"event_type": "approval", **payload})
