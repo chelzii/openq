@@ -131,6 +131,47 @@ button {
   gap: 12px;
 }
 
+.subpanel {
+  margin-top: 16px;
+}
+
+.result-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.result-chip {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(17, 29, 26, 0.92);
+  color: #e5f7f0;
+  border: 1px solid rgba(163, 71, 47, 0.14);
+}
+
+.result-chip span {
+  display: block;
+  margin-bottom: 6px;
+  color: rgba(229, 247, 240, 0.68);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.result-chip strong {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 14px;
+}
+
+.subpanel-title {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
 .inline-note {
   margin: 10px 0 0;
   color: var(--muted);
@@ -148,6 +189,10 @@ button {
   color: #d9f3eb;
   font-family: "IBM Plex Mono", monospace;
   font-size: 13px;
+}
+
+.output.compact {
+  min-height: 120px;
 }
 
 .audit-list {
@@ -169,6 +214,10 @@ button {
 @media (max-width: 900px) {
   .hero,
   .grid.two {
+    grid-template-columns: 1fr;
+  }
+
+  .result-strip {
     grid-template-columns: 1fr;
   }
 }
