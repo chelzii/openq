@@ -10,9 +10,11 @@ class Settings:
     data_dir: Path
     state_dir: Path
     audit_log: Path
+    request_trace_store: Path
     audit_export_dir: Path
     chain_registry: Path
     signer_identity: Path
+    openclaw_state_dir: Path
     chain_console_script: Path
     chain_contract_source: Path
     chain_console_contract_dir: Path
@@ -37,9 +39,11 @@ class Settings:
             data_dir=data_dir,
             state_dir=data_dir / "state",
             audit_log=data_dir / "audit" / "audit.jsonl",
+            request_trace_store=data_dir / "audit" / "request_traces.json",
             audit_export_dir=data_dir / "experiments",
             chain_registry=data_dir / "chain" / "registry.json",
-            signer_identity=data_dir / "chain" / "demo_identity.json",
+            signer_identity=data_dir / "chain" / "identities.json",
+            openclaw_state_dir=Path.home() / ".openclaw",
             chain_console_script=root_dir / "scripts" / "fisco-console.sh",
             chain_contract_source=root_dir / "contracts" / "OpenQRegistry.sol",
             chain_console_contract_dir=root_dir / "runtime-deps" / "fisco-portable" / "console" / "contracts" / "solidity",

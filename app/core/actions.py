@@ -14,6 +14,7 @@ STATE_TARGETS_BY_ACTION = {
     "update_prompt": "prompt/shared.txt",
     "update_config": "config/system.json",
 }
+STATE_ACTIONS_BY_TARGET = {target: action for action, target in STATE_TARGETS_BY_ACTION.items()}
 
 
 class EmptyArgs(BaseModel):
@@ -217,3 +218,10 @@ def get_action_spec(app: str, action: str) -> ActionSpec:
 
 def action_descriptions() -> dict[str, str]:
     return {key: spec.description for key, spec in ACTION_SPECS.items()}
+
+
+def state_action_for_target(target: str) -> str:
+    action = STATE_ACTIONS_BY_TARGET.get(target)
+    if action is None:
+        raise ValueError(f"unsupported protected state target: {target}")
+    return action

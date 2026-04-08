@@ -13,10 +13,10 @@ from app.schemas import ApprovalView
 class ApprovalService:
     approval_store: Path
 
-    def _read(self) -> dict[str, dict[str, str | list[str]]]:
+    def _read(self) -> dict[str, dict[str, str | list[str] | None]]:
         return read_json(self.approval_store, {})
 
-    def _write(self, payload: dict[str, dict[str, str | list[str]]]) -> None:
+    def _write(self, payload: dict[str, dict[str, str | list[str] | None]]) -> None:
         write_json(self.approval_store, payload)
 
     @staticmethod
@@ -74,7 +74,7 @@ class ApprovalService:
         payload = approvals.get(token)
         if not payload:
             raise ValueError("approval token not found")
-        if payload.get("status") not in {"pending", "approved"}:
+        if payload.get("status") != "pending":
             raise ValueError("approval token is no longer actionable")
         payload["status"] = "approved" if decision == "approve" else "rejected"
         payload["decided_at"] = self._now()
@@ -99,3 +99,6 @@ class ApprovalService:
         approvals[token] = payload
         self._write(approvals)
         return ApprovalView.model_validate({"token": token, **payload})
+
+    def reset(self) -> None:
+        self._write({})

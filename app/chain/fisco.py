@@ -15,7 +15,7 @@ from app.schemas import ChainStatusView
 
 
 CONTRACT_NAME = "OpenQRegistry"
-SEED_VERSION = 1
+SEED_VERSION = 2
 DEFAULT_IDENTITY_PERMISSIONS = {
     "agent": {
         "mail.list_messages": True,
@@ -29,6 +29,7 @@ DEFAULT_IDENTITY_PERMISSIONS = {
         "state.update_memory": True,
         "state.update_prompt": True,
         "state.update_config": True,
+        "approval.decide": False,
     },
     "approver": {
         "mail.list_messages": True,
@@ -42,6 +43,7 @@ DEFAULT_IDENTITY_PERMISSIONS = {
         "state.update_memory": True,
         "state.update_prompt": True,
         "state.update_config": True,
+        "approval.decide": True,
     },
 }
 
@@ -362,10 +364,16 @@ class FiscoBcosService:
                 self._call_return_values(f"call {CONTRACT_NAME} {contract_address} getAuditCount")
             except ChainConsoleError:
                 contract_address = None
+        if contract_address and state.get("seed_version") == SEED_VERSION:
+            self._registry_ready = True
+            return
         if not contract_address:
             contract_address = self._deploy_registry_contract()
         self._seed_registry(contract_address)
         self._registry_ready = True
+
+    def warmup_registry(self) -> None:
+        self._ensure_registry_ready()
 
     def authorize(self, signed_payload: dict[str, Any], signature: str, did: str, permission_key: str) -> ChainAuthorization:
         status = self.runtime_status()

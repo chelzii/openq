@@ -5,6 +5,7 @@
 - 需求终稿: [最终版需求文档.md](/home/chelizi/project/openq/docs/最终版需求文档.md)
 - 实现终稿: [最终版实现文档.md](/home/chelizi/project/openq/docs/最终版实现文档.md)
 - 迁移与部署: [部署与迁移说明.md](/home/chelizi/project/openq/docs/部署与迁移说明.md)
+- Windows 部署: [Windows部署说明.md](/home/chelizi/project/openq/docs/Windows部署说明.md)
 
 当前目录职责：
 

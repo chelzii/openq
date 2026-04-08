@@ -8,6 +8,7 @@ from typing import Any
 from app.apps.services import ProtectedStateStore
 from app.core.utils import read_json, sha256_text, write_json
 from app.schemas import ProtectedStateDiff
+from app.state.approval import ApprovalService
 
 
 GLOBAL_SUSPICIOUS_PATTERNS = (
@@ -29,6 +30,7 @@ TARGET_SPECIFIC_PATTERNS = {
 class StateIntegrityService:
     store: ProtectedStateStore
     baseline_file: Path
+    approvals: ApprovalService
 
     def __post_init__(self) -> None:
         self._ensure_baselines()
@@ -79,7 +81,15 @@ class StateIntegrityService:
                 )
         return report
 
-    def inspect_change(self, target: str, new_content: str) -> ProtectedStateDiff:
+    def inspect_change(
+        self,
+        target: str,
+        new_content: str,
+        *,
+        request_id: str,
+        payload_hash: str,
+        approval_token: str | None = None,
+    ) -> ProtectedStateDiff:
         old_content = self.store.read(target)
         old_hash = sha256_text(old_content)
         new_hash = sha256_text(new_content)
@@ -104,7 +114,7 @@ class StateIntegrityService:
         if baseline_drift_detected:
             risk_labels.append("baseline_drift")
         suspicious = bool(risk_labels)
-        return ProtectedStateDiff(
+        diff_result = ProtectedStateDiff(
             target=target,
             old_hash=old_hash,
             baseline_hash=baseline_hash,
@@ -116,6 +126,23 @@ class StateIntegrityService:
             baseline_drift_detected=baseline_drift_detected,
             risk_labels=risk_labels,
         )
+        if not suspicious:
+            return diff_result
+
+        approved = self.approvals.consume(approval_token, request_id, payload_hash)
+        if approved is not None:
+            return self._bind_approval(diff_result, approved, approval_granted=True)
+
+        current = self._matching_approval(approval_token, request_id, payload_hash)
+        if current is None:
+            current = self.approvals.issue(
+                request_id=request_id,
+                payload_hash=payload_hash,
+                target=target,
+                diff=diff,
+                risk_labels=risk_labels,
+            )
+        return self._bind_approval(diff_result, current, approval_granted=False)
 
     def grant_approval(self, diff: ProtectedStateDiff) -> ProtectedStateDiff:
         diff.approval_granted = True
@@ -134,4 +161,23 @@ class StateIntegrityService:
         if baseline:
             self.store.write(diff.target, baseline["content"])
         diff.rollback_performed = True
+        return diff
+
+    def _matching_approval(self, token: str | None, request_id: str, payload_hash: str):
+        if not token:
+            return None
+        approval = self.approvals.get(token)
+        if approval is None:
+            return None
+        if approval.request_id != request_id or approval.payload_hash != payload_hash:
+            return None
+        return approval
+
+    @staticmethod
+    def _bind_approval(diff: ProtectedStateDiff, approval, *, approval_granted: bool) -> ProtectedStateDiff:
+        diff.approval_granted = approval_granted
+        diff.approval_token = approval.token
+        diff.approval_status = approval.status
+        diff.approval_decision_by = approval.decision_by
+        diff.approval_note = approval.decision_note
         return diff

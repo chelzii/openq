@@ -54,6 +54,8 @@ class OpenClawPlan(BaseModel):
     calls: list[OpenClawToolCall]
     backend: str
     raw_response: str | None = None
+    degraded: bool = False
+    degraded_reason: str | None = None
 
 
 class GuardDecision(BaseModel):
@@ -164,6 +166,8 @@ class ScenarioDefinition(BaseModel):
     external_text: str = ""
     steps: list[ScenarioStep]
     expected_by_mode: dict[str, str]
+    request_mutation: str | None = None
+    chain_fault: str | None = None
 
 
 class ExecutionTrace(BaseModel):
@@ -176,15 +180,22 @@ class DemoRunRequest(BaseModel):
     scenario_id: str
     mode: Mode
     session_id: str = "demo-session"
-    use_real_openclaw: bool = False
+    use_real_openclaw: bool = True
+    include_mode_compare: bool = False
     approval_token: str | None = None
     user_task_override: str | None = None
+
+
+class ManualStateUpdateRequest(BaseModel):
+    target: str
+    content: str
+    mode: Mode
+    approval_token: str | None = None
 
 
 class ApprovalDecisionRequest(BaseModel):
     token: str
     decision: str = Field(pattern="^(approve|reject)$")
-    approver_did: str
     note: str = ""
 
 
@@ -211,10 +222,35 @@ class DemoRunResponse(BaseModel):
     final_status: str
     blocked_layer: str | None = None
     summary: str
+    mode_compare: list["ModeCompareResult"] = Field(default_factory=list)
+
+
+class ModeCompareResult(BaseModel):
+    mode: Mode
+    final_status: str
+    blocked_layer: str | None = None
+    request_id: str | None = None
+    summary: str
+    openclaw_backend: str | None = None
+
+
+class RequestTraceBundle(BaseModel):
+    request_id: str
+    source: str
+    assistant_reply: str | None = None
+    openclaw_backend: str | None = None
+    openclaw_raw_response: str | None = None
+    traces: list[ExecutionTrace] = Field(default_factory=list)
+    final_status: str | None = None
+    blocked_layer: str | None = None
+    summary: str | None = None
+    mode_compare: list[ModeCompareResult] = Field(default_factory=list)
 
 
 class ApprovalDecisionResponse(BaseModel):
     approval: ApprovalView
+    auth: AuthResult | None = None
+    audit: AuditView | None = None
 
 
 class ExperimentRecord(BaseModel):
@@ -238,3 +274,45 @@ class ExperimentRecord(BaseModel):
     approval_required: bool = False
     approval_granted: bool = False
     approval_status: str | None = None
+    rollback_performed: bool = False
+    guard_decision_stage: str | None = None
+    auth_reason: str | None = None
+    risk_level: str | None = None
+    plan_backend: str | None = None
+    degraded_allowed: bool = False
+
+
+class ExperimentAggregate(BaseModel):
+    mode: Mode
+    total: int
+    blocked: int
+    executed: int
+    correct: int
+    false_positive_rate: float
+    interception_rate: float
+    state_detection_rate: float
+    avg_latency_ms: float
+
+
+class ExperimentReport(BaseModel):
+    records: list[ExperimentRecord]
+    aggregates: list[ExperimentAggregate]
+    run_id: str | None = None
+    total_scenarios: int | None = None
+    total_runs: int | None = None
+    paper_ablation_runs: int | None = None
+    exported_dir: str | None = None
+    exported_json: str
+    exported_csv: str
+    manifest_json: str | None = None
+    responses_json: str | None = None
+    traces_json: str | None = None
+    audit_json: str | None = None
+    chain_json: str | None = None
+    scenarios_json: str | None = None
+    paper_ablation_json: str | None = None
+    paper_ablation_csv: str | None = None
+
+
+DemoRunResponse.model_rebuild()
+RequestTraceBundle.model_rebuild()

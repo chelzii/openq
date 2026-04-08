@@ -1,0 +1,15 @@
+{
+  "repo_root": "/home/chelizi/project/openq",
+  "project_id": "proj-6d00a31d30fe412ba6a20fe16919eec7",
+  "config_source": null,
+  "runtime_home": "/home/chelizi/project/openq/.caravan/codex-runtime/proj-6d00a31d30fe412ba6a20fe16919eec7/home",
+  "config_path": "/home/chelizi/project/openq/.caravan/codex-runtime/proj-6d00a31d30fe412ba6a20fe16919eec7/home/config.toml",
+  "shared_sessions_root": "/home/chelizi/.codex/sessions",
+  "env_keys": [
+    "CODEX_HOME"
+  ],
+  "sensitive_env_keys": [],
+  "permission_mode": "default",
+  "exec_timeout_seconds": 1800,
+  "idle_timeout_seconds": null
+}

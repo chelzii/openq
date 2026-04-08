@@ -3,220 +3,841 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OpenQ Demo Console</title>
+  <title>OpenQ 虚拟终端安全防御</title>
   <link rel="stylesheet" href="/static/style.css">
+  <!-- 引入图标库 (FontAwesome) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    /* 增加一些底层证据展示的样式 */
+    .raw-evidence {
+      background: #111827;
+      color: #10b981;
+      padding: 10px;
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      overflow-x: auto;
+      margin-top: 8px;
+    }
+    .evidence-title {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .pulse-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--color-success);
+      animation: pulse-green 2s infinite;
+    }
+    @keyframes pulse-green {
+      0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+      70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+  </style>
 </head>
 <body>
-  <main class="shell">
-    <section class="hero">
-      <div>
-        <p class="eyebrow">OpenClaw + Multi App + Dual Defense</p>
-        <h1>OpenQ 虚拟终端安全演示台</h1>
-        <p class="lede">统一网关、动态意图护栏、真实 FISCO 链状态探测、受保护状态写入和实验统计全部收敛到同一套主工程里。</p>
+  <div class="app-container">
+    
+    <!-- 头部导航 -->
+    <header class="app-header">
+      <div class="header-titles">
+        <h1><i class="fa-solid fa-shield-halved"></i> OpenQ 虚拟终端安防控制台</h1>
+        <p>基于 OpenClaw 智能体的多 App 环境协同防护系统 · 实时攻防透视与举证</p>
       </div>
-      <div class="stack">
-        <div class="identity-card">
-          <div class="label">Demo DID</div>
-          <div class="value">{{ identity.did }}</div>
-          <div class="label">Signer</div>
-          <div class="value">{{ identity.label }}</div>
+      <div class="header-status">
+        <div class="status-badge" id="openclaw-badge">
+          <span class="status-dot" id="openclaw-pill"></span> 
+          OpenClaw: <span id="openclaw-backend">{{ openclaw_status.backend }}</span>
         </div>
-        <div class="identity-card">
-          <div class="label">Chain Backend</div>
-          <div class="value" id="chain-backend">{{ chain_status.backend }}</div>
-          <div class="label">Chain Status</div>
-          <div class="value" id="chain-status">{{ "available" if chain_status.available else "offline" }}</div>
-          <div class="label">Latest Block</div>
-          <div class="value" id="chain-block">{{ chain_status.block_number or "N/A" }}</div>
+        <div class="status-badge" id="chain-badge">
+          <span class="status-dot" id="chain-pill"></span> 
+          FISCO BCOS: Block <span id="chain-block">{{ chain_status.block_number or "N/A" }}</span>
+        </div>
+        <div class="status-badge" style="border-color: #d97706; background: #fffbeb; color: #b45309;">
+          <i class="fa-solid fa-id-card"></i> <span class="mono">{{ identity.did }}</span>
         </div>
       </div>
-    </section>
+    </header>
 
-    <section class="grid two">
-      <article class="panel">
-        <h2>运行场景</h2>
-        <label for="scenario">场景</label>
-        <select id="scenario">
+    <!-- 核心双视图 -->
+    <main class="main-split">
+      
+      <!-- 左侧：虚拟终端视角 (模拟手机设备) -->
+      <section class="panel terminal-panel">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+          <h2 style="margin:0; border:none;"><i class="fa-solid fa-mobile-screen"></i> 虚拟终端设备视角</h2>
+          <span class="tag neutral"><span class="pulse-dot"></span> 实时监控中</span>
+        </div>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+          在此选择攻击实验场景，或直接输入自定义恶意指令。下方将展示 OpenClaw 的实时决策和三模式下的最终防线拦截结果。
+        </p>
+
+        <!-- 场景卡片网格 -->
+        <div class="scenario-grid" id="scenario-grid">
+          {% for scenario in scenarios %}
+          <div class="scenario-card" data-scenario-id="{{ scenario.scenario_id }}" onclick="selectScenario('{{ scenario.scenario_id }}')">
+            <div class="scenario-title"><i class="fa-solid fa-flask"></i> {{ scenario.title }}</div>
+            <div class="scenario-desc">{{ scenario.description }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        
+        <!-- 隐藏的下拉框用于兼容逻辑 -->
+        <select id="scenario" style="display:none;">
           {% for scenario in scenarios %}
           <option value="{{ scenario.scenario_id }}">{{ scenario.title }}</option>
           {% endfor %}
         </select>
-        <label for="user-task-override">任务输入</label>
-        <textarea id="user-task-override" rows="4"></textarea>
-        <p id="scenario-meta" class="inline-note"></p>
-        <label for="mode">模式</label>
-        <select id="mode">
-          <option value="off">off</option>
-          <option value="guard_only">guard_only</option>
-          <option value="full" selected>full</option>
-        </select>
-        <label class="checkbox">
-          <input id="use-real-openclaw" type="checkbox">
-          尝试连接真实 OpenClaw
-        </label>
-        <button id="run-demo">运行场景</button>
-        <pre id="demo-output" class="output">等待运行结果...</pre>
-      </article>
 
-      <article class="panel">
-        <h2>批量实验</h2>
-        <p>一键在三种模式下运行全部样本，输出拦截率、误报率、平均延迟和导出文件路径。</p>
-        <button id="run-experiments">运行消融实验</button>
-        <pre id="experiment-output" class="output">等待实验结果...</pre>
-      </article>
-    </section>
-
-    <section class="grid two">
-      <article class="panel">
-        <h2>受保护状态</h2>
-        <label for="state-target">目标</label>
-        <select id="state-target">
-          {% for target, _ in state_targets.items() %}
-          <option value="{{ target }}">{{ target }}</option>
-          {% endfor %}
-        </select>
-        <label for="state-content">内容</label>
-        <textarea id="state-content" rows="10">{% for target, content in state_targets.items() %}{% if loop.first %}{{ content }}{% endif %}{% endfor %}</textarea>
-        <label for="approval-token">审批令牌</label>
-        <input id="approval-token" type="text" placeholder="高危修改时输入 APPROVED">
-        <button id="submit-state">提交状态修改</button>
-        <pre id="state-output" class="output">等待状态修改结果...</pre>
-      </article>
-
-      <article class="panel">
-        <h2>最近审计</h2>
-        <div id="audit-list" class="audit-list">
-          {% for item in recent_audit %}
-          <div class="audit-item">
-            <div>{{ item.request_id }}</div>
-            <div>{{ item.status }} / {{ item.blocked_layer or "none" }}</div>
-            <div>{{ item.app }}.{{ item.action }}</div>
-            <div>{{ item.message }}</div>
+        <!-- 恢复用户自定义输入的展示 (证据层：证明这不是录好的假Demo) -->
+        <div class="form-group">
+          <label>自定义攻击载荷 (User Task Override)</label>
+          <textarea id="user-task-override" rows="2" placeholder="在此输入自定义攻击提示词..."></textarea>
+        </div>
+        
+        <!-- 运行控制面板 -->
+        <div class="run-controls">
+          <div class="form-group" style="margin-bottom:0; flex:1;">
+            <label style="margin-bottom:2px;">防护模式</label>
+            <select id="mode" style="padding:6px; font-size:0.85rem;">
+              <option value="off">🔴 裸奔模式 (Off)</option>
+              <option value="guard_only">🟡 仅意图护栏 (Guard Only)</option>
+              <option value="full" selected>🟢 双层协同全开 (Full)</option>
+            </select>
           </div>
-          {% endfor %}
+          <div style="flex:1; display:flex; align-items:center; gap:6px;">
+             <input id="use-real-openclaw" type="checkbox" checked>
+             <label for="use-real-openclaw" style="margin:0; font-size:0.85rem; cursor:pointer;">连接真实大模型</label>
+          </div>
         </div>
-        <div class="button-row">
-          <button id="refresh-audit">刷新审计</button>
-          <button id="refresh-chain">刷新链状态</button>
+
+        <button id="run-demo" class="btn btn-primary"><i class="fa-solid fa-play"></i> 触发场景调用</button>
+
+        <!-- 恢复三模式消融对比展示区 -->
+        <div id="mode-compare-container" style="margin-top:20px; display:none;">
+          <div class="evidence-title"><i class="fa-solid fa-code-compare"></i> 三模式验证结果对比 (本次请求)</div>
+          <div id="mode-compare" class="metrics-grid" style="margin-top:8px;"></div>
         </div>
-        <div id="state-drift" class="inline-note">等待状态漂移检查...</div>
-      </article>
+
+        <!-- 智能体终端 UI 模拟 -->
+        <div class="device-mockup" style="margin-top:24px;">
+          <div class="device-header">
+            <span><i class="fa-solid fa-robot"></i> OpenClaw Assistant</span>
+            <span id="demo-request-id" style="font-size:0.75rem; font-family:var(--font-mono); color:var(--text-muted);">idle</span>
+          </div>
+          <div class="device-body" id="chat-container">
+            <div class="chat-system">系统就绪。请在上方选择场景并点击运行。</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 右侧：上帝安防透视视角 -->
+      <section class="panel security-panel">
+        <div class="security-header">
+          <h2><i class="fa-solid fa-satellite-dish"></i> 系统安防透视图 (X-Ray View)</h2>
+          <div style="display:flex; gap:12px; align-items:center;">
+             <span style="font-size:0.85rem; color:var(--text-muted);">执行终态:</span>
+             <strong id="demo-final-status" class="tag neutral">等待执行</strong>
+          </div>
+        </div>
+
+        <!-- 动态链路跟踪器 (Stepper) -->
+        <div class="pipeline-viz">
+          <div class="pipe-node active" id="pipe-gateway">
+            <div class="pipe-circle"><i class="fa-solid fa-door-open"></i></div>
+            <div class="pipe-label">统一网关</div>
+            <div class="pipe-status">接管请求</div>
+          </div>
+          <div class="pipe-node" id="pipe-guard">
+            <div class="pipe-circle"><i class="fa-solid fa-brain"></i></div>
+            <div class="pipe-label">意图护栏</div>
+            <div class="pipe-status" id="pipe-status-guard">等待</div>
+          </div>
+          <div class="pipe-node" id="pipe-chain">
+            <div class="pipe-circle"><i class="fa-solid fa-link"></i></div>
+            <div class="pipe-label">链上验权</div>
+            <div class="pipe-status" id="pipe-status-chain">等待</div>
+          </div>
+          <div class="pipe-node" id="pipe-sandbox">
+            <div class="pipe-circle"><i class="fa-solid fa-box"></i></div>
+            <div class="pipe-label">简易沙箱</div>
+            <div class="pipe-status" id="pipe-status-exec">等待</div>
+          </div>
+        </div>
+
+        <!-- 深度防御信息解析卡片 -->
+        <div class="defense-grid">
+          
+          <!-- 意图护栏卡片 -->
+          <div class="defense-card">
+            <h3><i class="fa-solid fa-scale-balanced"></i> 第一层：动态语义意图判定</h3>
+            <div class="metric-row">
+              <span class="metric-label">最终判定</span>
+              <span class="tag neutral" id="guard-decision">N/A</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">语义相似度得分</span>
+              <div style="display:flex; align-items:center;">
+                <span class="metric-val" id="guard-similarity">0.00</span>
+                <div class="score-bar-container"><div id="guard-sim-bar" class="score-bar" style="width: 0%;"></div></div>
+              </div>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">异常风险类型</span>
+              <span class="metric-val" id="guard-risk" style="color:var(--color-danger);">None</span>
+            </div>
+            <!-- 增强证据：展示原始判定日志 -->
+            <div class="evidence-title" style="margin-top:12px;">原始护栏日志</div>
+            <pre class="raw-evidence" id="guard-reason">等待调用数据...</pre>
+          </div>
+
+          <!-- 区块链卡片 -->
+          <div class="defense-card">
+            <h3><i class="fa-solid fa-fingerprint"></i> 第二层：FISCO BCOS 身份授权</h3>
+            <div class="metric-row">
+              <span class="metric-label">公钥验签</span>
+              <span class="tag neutral" id="chain-verified">N/A</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">权限核对 (Action)</span>
+              <span class="tag neutral" id="chain-allowed">N/A</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">链上审计状态</span>
+              <span class="metric-val" id="chain-audit-status">等待写入摘要</span>
+            </div>
+            <!-- 增强证据：展示原始链上返回 -->
+            <div class="evidence-title" style="margin-top:12px;">链网关原始响应</div>
+            <pre class="raw-evidence" id="chain-reason">等待验证数据...</pre>
+          </div>
+
+          <!-- 状态防篡改卡片 -->
+          <div class="defense-card full-width">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <h3><i class="fa-solid fa-file-shield"></i> 核心状态与记忆防篡改告警</h3>
+              <span class="tag neutral" id="state-stage">暂无变更</span>
+            </div>
+            <div class="metric-row" style="border-bottom:none;">
+              <span class="metric-label">篡改目标：<strong id="state-target-name">无</strong></span>
+              <span class="metric-label">可疑动作：<strong id="state-suspicious">否</strong> | 自动回滚：<strong id="state-rollback">否</strong></span>
+            </div>
+            <div id="state-diff-container" class="diff-view" style="display:none; margin-top:8px;">
+               <!-- Diff will be rendered here -->
+            </div>
+            <div id="state-no-diff" class="code-block" style="text-align:center; padding:20px; color:var(--text-muted);">
+               本次调用未触发核心记忆或共享 Prompt 修改
+            </div>
+          </div>
+        </div>
+      </section>
+      
+    </main>
+
+    <!-- 底部功能区：实验、审批、日志 (Tabs) -->
+    <section class="bottom-panel">
+      <!-- 选项卡按钮 -->
+      <div class="tabs-header">
+        <button class="tab-btn active" onclick="switchTab('tab-experiments')"><i class="fa-solid fa-chart-line"></i> 消融实验分析</button>
+        <button class="tab-btn" onclick="switchTab('tab-audits')"><i class="fa-solid fa-magnifying-glass-chart"></i> 结构化审计与链存证</button>
+        <button class="tab-btn" onclick="switchTab('tab-approvals')" id="tab-btn-approval">
+           <i class="fa-solid fa-triangle-exclamation"></i> 篡改审批台
+           <span class="tag warn" style="margin-left:8px;" id="pending-count-badge">{{ pending_approvals|length }}</span>
+        </button>
+        <button class="tab-btn" onclick="switchTab('tab-state')">
+           <i class="fa-solid fa-wrench"></i> 底层状态监控 
+           <span id="state-drift-badge" class="tag neutral" style="margin-left:8px;">检测中</span>
+        </button>
+      </div>
+
+      <!-- 面板 1：批量实验 -->
+      <div id="tab-experiments" class="tab-content active">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <div>
+             <h3 style="margin:0;">三模式批量消融实验</h3>
+             <p style="margin:4px 0 0; font-size:0.85rem; color:var(--text-muted);">一键全量运行所有测试用例，导出论文所需的对比图表原始数据与 JSON。</p>
+          </div>
+          <button id="run-experiments" class="btn btn-secondary"><i class="fa-solid fa-bolt"></i> 运行实验</button>
+        </div>
+        <div id="experiment-aggregates" class="metrics-grid">
+           <div class="metric-card"><div style="color:var(--text-muted);">请点击右上角运行实验</div></div>
+        </div>
+        <div id="experiment-meta" style="margin-top:16px; font-size:0.85rem; color:var(--color-primary);"></div>
+        <!-- 强化证据：展示详细实验记录的原始格式 -->
+        <div id="experiment-records" class="record-list" style="max-height:350px;"></div>
+      </div>
+
+      <!-- 面板 2：审计日志 -->
+      <div id="tab-audits" class="tab-content">
+        <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom: 16px;">
+          <div style="flex:1; max-width:400px;">
+            <label style="font-size:0.85rem; font-weight:600; display:block; margin-bottom:6px;">精确溯源 (Request ID)</label>
+            <div style="display:flex; gap:12px;">
+              <input id="request-filter" type="text" placeholder="输入 req_xxxx..." style="width:100%; padding:8px; border-radius:4px; border:1px solid #ccc; font-family:monospace;">
+              <button id="load-request-trace" class="btn btn-secondary"><i class="fa-solid fa-search"></i> 检索</button>
+            </div>
+          </div>
+          <button id="refresh-audit" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate"></i> 刷新全局日志</button>
+        </div>
+        <div id="request-trace-output" style="margin-bottom:16px; font-size:0.85rem; font-weight:bold; color:var(--color-primary);"></div>
+        
+        <div class="defense-grid">
+          <div class="defense-card">
+            <h3><i class="fa-solid fa-file-lines"></i> 本地结构化日志 (Raw)</h3>
+            <div id="audit-list" class="record-list" style="background:#111827; padding:12px; border-radius:6px; color:#a7f3d0; font-family:var(--font-mono);"></div>
+          </div>
+          <div class="defense-card">
+            <h3><i class="fa-solid fa-link"></i> FISCO BCOS 链上摘要存证 (Raw)</h3>
+            <div id="chain-audit-list" class="record-list" style="background:#111827; padding:12px; border-radius:6px; color:#93c5fd; font-family:var(--font-mono);"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 面板 3：审批台 -->
+      <div id="tab-approvals" class="tab-content">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <div>
+            <h3 style="margin:0;">安全管理员人工审批通道</h3>
+            <p style="margin:4px 0 0; font-size:0.85rem; color:var(--text-muted);">当 <strong>Full</strong> 模式下检测到“记忆投毒”或“配置篡改”时，操作在此挂起。您的 DID: <strong class="mono">{{ approver_identity.did }}</strong></p>
+          </div>
+          <button id="refresh-approvals" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate-right"></i> 刷新队列</button>
+        </div>
+        <div id="approval-output" style="font-size:0.85rem; color:var(--color-info); margin-bottom:12px;"></div>
+        <div id="approval-list">
+           <!-- 审批项插入这里 -->
+        </div>
+      </div>
+
+      <!-- 面板 4：状态管理工具 -->
+      <div id="tab-state" class="tab-content">
+        <h3>底层文件与记忆防篡改监控</h3>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
+           此面板证明系统具备实时的底层文件基线比对能力。系统当前检测到 <strong id="state-drift" style="color:var(--color-danger); font-size:1.1rem;">0</strong> 处异常漂移。
+        </p>
+        
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+          <div>
+            <label style="font-size:0.85rem; font-weight:bold; display:block; margin-bottom:4px;">绕过网关强行修改测试目标</label>
+            <select id="state-target" style="width:100%; padding:8px; border-radius:4px; border:1px solid #ccc;">
+              {% for target, _ in state_targets.items() %}
+              <option value="{{ target }}">{{ target }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label style="font-size:0.85rem; font-weight:bold; display:block; margin-bottom:4px;">人工审批令牌 (若有)</label>
+            <div style="display:flex; gap:8px;">
+               <input id="approval-token" type="text" placeholder="留空则触发阻断/审批流..." style="flex:1; padding:8px; border:1px solid #ccc; border-radius:4px;">
+               <button id="clear-approval-token" class="btn btn-secondary btn-sm">清空</button>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:16px;">
+          <label style="font-size:0.85rem; font-weight:bold; display:block; margin-bottom:4px;">注入内容</label>
+          <textarea id="state-content" rows="5" style="width:100%; padding:8px; border-radius:4px; border:1px solid #ccc; font-family:monospace; font-size:0.8rem;">{% for target, content in state_targets.items() %}{% if loop.first %}{{ content }}{% endif %}{% endfor %}</textarea>
+        </div>
+        <button id="submit-state" class="btn btn-primary" style="margin-top:16px; width:200px;"><i class="fa-solid fa-upload"></i> 发送底层写入指令</button>
+        <div class="evidence-title" style="margin-top:16px;">执行结果与审计回调</div>
+        <div id="state-submit-output" class="raw-evidence" style="margin-top:8px;">等待操作...</div>
+      </div>
     </section>
-  </main>
 
+  </div>
+
+  <!-- JavaScript 交互逻辑 -->
   <script>
-    const scenarios = {{ scenario_payloads|tojson }};
-    const scenarioMap = Object.fromEntries(scenarios.map((item) => [item.scenario_id, item]));
-    const scenarioSelect = document.getElementById("scenario");
-    const userTaskOverride = document.getElementById("user-task-override");
-    const scenarioMeta = document.getElementById("scenario-meta");
-    const modeSelect = document.getElementById("mode");
-    const runDemoButton = document.getElementById("run-demo");
-    const demoOutput = document.getElementById("demo-output");
-    const experimentButton = document.getElementById("run-experiments");
-    const experimentOutput = document.getElementById("experiment-output");
-    const stateTarget = document.getElementById("state-target");
-    const stateContent = document.getElementById("state-content");
-    const approvalToken = document.getElementById("approval-token");
-    const stateOutput = document.getElementById("state-output");
-    const useRealOpenClaw = document.getElementById("use-real-openclaw");
-    const refreshAuditButton = document.getElementById("refresh-audit");
-    const refreshChainButton = document.getElementById("refresh-chain");
-    const auditList = document.getElementById("audit-list");
-    const stateDrift = document.getElementById("state-drift");
-    const chainBackend = document.getElementById("chain-backend");
-    const chainStatus = document.getElementById("chain-status");
-    const chainBlock = document.getElementById("chain-block");
+    // --- 界面交互：选项卡 ---
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+      event.currentTarget.classList.add('active');
+      document.getElementById(tabId).classList.add('active');
+    }
 
+    // --- 数据与DOM节点初始化 ---
+    const scenarios = {{ scenario_payloads|tojson }};
+    const initialPendingApprovals = {{ pending_approvals|tojson }};
+    const approverDid = {{ approver_identity.did|tojson }};
+    const scenarioMap = Object.fromEntries(scenarios.map((item) => [item.scenario_id, item]));
+
+    // DOMs
+    const scenarioSelect = document.getElementById("scenario"); // hidden
+    const userTaskOverride = document.getElementById("user-task-override");
+    const modeSelect = document.getElementById("mode");
+    const useRealOpenClaw = document.getElementById("use-real-openclaw");
+    
+    // Chat UI
+    const chatContainer = document.getElementById("chat-container");
+    const demoFinalStatus = document.getElementById("demo-final-status");
+    const demoRequestId = document.getElementById("demo-request-id");
+    
+    // Pipeline Nodes
+    const pipeGuard = document.getElementById("pipe-guard");
+    const pipeChain = document.getElementById("pipe-chain");
+    const pipeSandbox = document.getElementById("pipe-sandbox");
+    const pStatusGuard = document.getElementById("pipe-status-guard");
+    const pStatusChain = document.getElementById("pipe-status-chain");
+    const pStatusExec = document.getElementById("pipe-status-exec");
+    
+    // Defense Details
+    const guardDecision = document.getElementById("guard-decision");
+    const guardSimilarity = document.getElementById("guard-similarity");
+    const guardSimBar = document.getElementById("guard-sim-bar");
+    const guardRisk = document.getElementById("guard-risk");
+    const guardReason = document.getElementById("guard-reason");
+    
+    const chainVerified = document.getElementById("chain-verified");
+    const chainAllowed = document.getElementById("chain-allowed");
+    const chainReason = document.getElementById("chain-reason");
+    const chainAuditStatus = document.getElementById("chain-audit-status");
+    
+    const stateStage = document.getElementById("state-stage");
+    const stateTargetName = document.getElementById("state-target-name");
+    const stateSuspicious = document.getElementById("state-suspicious");
+    const stateRollback = document.getElementById("state-rollback");
+    const stateDiffContainer = document.getElementById("state-diff-container");
+    const stateNoDiff = document.getElementById("state-no-diff");
+    const modeCompareContainer = document.getElementById("mode-compare-container");
+    const modeCompare = document.getElementById("mode-compare");
+    
+    // HTTP Helper
     async function postJson(url, payload) {
       const response = await fetch(url, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(payload)
       });
-      return await response.json();
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || JSON.stringify(result));
+      return result;
     }
 
-    function syncScenarioView(resetTask = false) {
-      const scenario = scenarioMap[scenarioSelect.value];
-      if (!scenario) {
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, function(m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+      });
+    }
+
+    function pillClass(value) {
+      const lowered = String(value || "").toLowerCase();
+      if (["executed", "approved", "consumed", "allowed", "available", "verified", "online"].some((item) => lowered.includes(item))) {
+        return "tag ok";
+      }
+      if (["blocked", "rejected", "error", "denied", "offline", "unavailable", "invalid"].some((item) => lowered.includes(item))) {
+        return "tag bad";
+      }
+      if (["pending", "reranker", "degraded", "running"].some((item) => lowered.includes(item))) {
+        return "tag warn";
+      }
+      return "tag neutral";
+    }
+
+    function compareCard(label, value, detail = "") {
+      return `
+        <div class="metric-card" style="padding:12px;">
+          <div style="font-size:0.85rem; color:var(--text-muted); font-weight:bold;">${escapeHtml(label)}</div>
+          <div class="metric-value" style="font-size:1.2rem;">${escapeHtml(value || "N/A")}</div>
+          ${detail ? `<div style="font-size:0.75rem; font-family:var(--font-mono); color:var(--color-info);">${escapeHtml(detail)}</div>` : ""}
+        </div>
+      `;
+    }
+
+    // --- 场景卡片选择 ---
+    function selectScenario(id) {
+      document.querySelectorAll('.scenario-card').forEach(card => card.classList.remove('active'));
+      const activeCard = document.querySelector(`.scenario-card[data-scenario-id="${id}"]`);
+      if (activeCard) activeCard.classList.add('active');
+      
+      scenarioSelect.value = id;
+      const scenario = scenarioMap[id];
+      if (scenario) {
+        userTaskOverride.value = scenario.user_task;
+        // 清空终端聊天
+        chatContainer.innerHTML = `
+          <div class="chat-system">已加载场景: ${escapeHtml(scenario.title)}</div>
+          <div class="chat-bubble chat-user">
+            <strong><i class="fa-solid fa-user"></i> 用户输入指令:</strong><br/>
+            ${escapeHtml(scenario.user_task)}
+          </div>
+        `;
+      }
+      resetPipeline();
+    }
+
+    // --- 重置右侧状态 ---
+    function resetPipeline() {
+      // Reset Nodes
+      [pipeGuard, pipeChain, pipeSandbox].forEach(el => {
+         el.className = 'pipe-node';
+      });
+      pStatusGuard.textContent = "等待";
+      pStatusChain.textContent = "等待";
+      pStatusExec.textContent = "等待";
+      demoFinalStatus.className = "tag neutral";
+      demoFinalStatus.textContent = "等待执行";
+      modeCompareContainer.style.display = "none";
+      
+      // Reset details
+      guardDecision.className = "tag neutral"; guardDecision.textContent = "N/A";
+      guardSimilarity.textContent = "0.00"; guardSimBar.style.width = "0%"; guardSimBar.className = "score-bar";
+      guardRisk.textContent = "None"; guardReason.textContent = "等待新调用数据...";
+      
+      chainVerified.className = "tag neutral"; chainVerified.textContent = "N/A";
+      chainAllowed.className = "tag neutral"; chainAllowed.textContent = "N/A";
+      chainReason.textContent = "等待验证数据...";
+      chainAuditStatus.textContent = "等待写入摘要";
+      
+      stateStage.className = "tag neutral"; stateStage.textContent = "暂无变更";
+      stateTargetName.textContent = "无";
+      stateDiffContainer.style.display = "none";
+      stateNoDiff.style.display = "block";
+    }
+
+    // --- 渲染聊天气泡 ---
+    function appendChatBubble(type, content) {
+      const div = document.createElement("div");
+      div.className = `chat-bubble chat-${type}`;
+      if(type === 'agent') div.innerHTML = `<strong><i class="fa-solid fa-robot"></i> OpenClaw:</strong><br/>${escapeHtml(content)}`;
+      else if(type === 'system') div.innerHTML = escapeHtml(content);
+      chatContainer.appendChild(div);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function renderModeCompare(result) {
+      if (result && Array.isArray(result.mode_compare) && result.mode_compare.length) {
+        modeCompareContainer.style.display = "block";
+        modeCompare.innerHTML = result.mode_compare.map((item) => {
+          const status = `${item.final_status}`;
+          const detail = item.blocked_layer ? `Layer: ${item.blocked_layer}` : "Fully Executed";
+          return compareCard(`[${item.mode}]`, status, detail);
+        }).join("");
+      }
+    }
+
+    // --- 核心渲染：防御解析 (证据层加强) ---
+    function renderDefenseSummary(result) {
+      const lastTrace = result.traces[result.traces.length - 1];
+      if (!lastTrace) return;
+      const response = lastTrace.response || {};
+      const guard = response.guard || {};
+      const auth = response.auth || {};
+      const state = response.state_change || {};
+      const finalStatus = result.final_status || "executed";
+      const blockedLayer = result.blocked_layer || null;
+
+      // 1. Guard Layer Visualization
+      const mode = modeSelect.value;
+      if (mode === "off") {
+        pipeGuard.className = "pipe-node skipped"; pStatusGuard.textContent = "已关闭";
+        guardDecision.textContent = "跳过检测";
+        guardReason.textContent = "运行模式为 off，第一层防御已被禁用。";
+      } else {
+        const isGuardBlocked = blockedLayer === "guard";
+        pipeGuard.className = `pipe-node ${isGuardBlocked ? 'danger' : 'success'}`;
+        pStatusGuard.textContent = isGuardBlocked ? "已拦截" : "已放行";
+        
+        guardDecision.className = `tag ${isGuardBlocked ? 'bad' : 'ok'}`;
+        guardDecision.textContent = guard.decision_stage || (isGuardBlocked ? "拦截" : "放行");
+        
+        const sim = parseFloat(guard.intent_similarity) || 0;
+        guardSimilarity.textContent = sim.toFixed(3);
+        guardSimBar.style.width = `${Math.min(Math.max(sim * 100, 0), 100)}%`;
+        if (sim < 0.3) guardSimBar.className = "score-bar danger";
+        else if (sim < 0.6) guardSimBar.className = "score-bar warning";
+        else guardSimBar.className = "score-bar";
+        
+        guardRisk.textContent = guard.risk_type || "None";
+        guardReason.innerHTML = JSON.stringify(guard, null, 2); // 原始 JSON 证据
+      }
+
+      // 2. Chain Auth Layer
+      if (mode === "off" || mode === "guard_only") {
+        pipeChain.className = "pipe-node skipped"; pStatusChain.textContent = "已关闭";
+        chainReason.textContent = "当前模式未启用链上验权。";
+      } else if (blockedLayer === "guard") {
+        pipeChain.className = "pipe-node skipped"; pStatusChain.textContent = "未到达";
+        chainReason.textContent = "请求已在第一层被阻断，未进入 FISCO BCOS 网关。";
+      } else {
+        const isChainBlocked = blockedLayer === "auth";
+        pipeChain.className = `pipe-node ${isChainBlocked ? 'danger' : 'success'}`;
+        pStatusChain.textContent = isChainBlocked ? "验权失败" : "校验通过";
+        
+        chainVerified.className = `tag ${auth.verified ? 'ok' : 'bad'}`;
+        chainVerified.textContent = auth.verified ? "合法" : "无效";
+        chainAllowed.className = `tag ${auth.permission_allowed ? 'ok' : 'bad'}`;
+        chainAllowed.textContent = auth.permission_allowed ? "已授权" : "越权";
+        chainAuditStatus.textContent = result.audit_written ? "写入成功" : "失败";
+        
+        chainReason.innerHTML = JSON.stringify(auth, null, 2); // 原始 JSON 证据
+      }
+
+      // 3. Sandbox / State Execution Layer
+      if (blockedLayer === "guard" || blockedLayer === "auth") {
+        pipeSandbox.className = "pipe-node danger"; pStatusExec.textContent = "被阻断";
+      } else {
+        pipeSandbox.className = "pipe-node success"; pStatusExec.textContent = "执行完成";
+      }
+      
+      demoFinalStatus.className = pillClass(finalStatus);
+      demoFinalStatus.textContent = finalStatus.toUpperCase();
+
+      // 4. State Diff Rendering
+      if (state.target) {
+        stateStage.className = pillClass(state.approval_status || (state.rollback_performed ? "blocked" : "ok"));
+        stateStage.textContent = state.rollback_performed ? '强制回滚' : (state.approval_status || '生效');
+        stateTargetName.textContent = state.target;
+        stateSuspicious.textContent = state.suspicious ? "是" : "否";
+        stateRollback.textContent = state.rollback_performed ? "是" : "否";
+        
+        stateNoDiff.style.display = "none";
+        stateDiffContainer.style.display = "block";
+        
+        const diffText = escapeHtml(state.diff || "内容无变化");
+        const coloredDiff = diffText.split('\n').map(line => {
+           if(line.startsWith('+') && !line.startsWith('+++')) return `<div class="diff-line diff-add">${line}</div>`;
+           if(line.startsWith('-') && !line.startsWith('---')) return `<div class="diff-line diff-sub">${line}</div>`;
+           return `<div class="diff-line diff-normal">${line}</div>`;
+        }).join('');
+        stateDiffContainer.innerHTML = coloredDiff;
+      } else {
+        stateNoDiff.style.display = "block";
+        stateDiffContainer.style.display = "none";
+        stateTargetName.textContent = "无";
+      }
+    }
+
+    // --- 运行主演示逻辑 ---
+    document.getElementById("run-demo").addEventListener("click", async () => {
+      resetPipeline();
+      const id = scenarioSelect.value;
+      if(!id) return alert("请先选择场景！");
+      
+      demoFinalStatus.className = "tag warn";
+      demoFinalStatus.textContent = "系统处理中...";
+      demoRequestId.textContent = "req: pending";
+      
+      // Spinner
+      pipeGuard.className = "pipe-node active"; pStatusGuard.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+      
+      try {
+        const payload = {
+          scenario_id: id,
+          mode: modeSelect.value,
+          use_real_openclaw: useRealOpenClaw.checked,
+          include_mode_compare: true, // 开启三模式对比证据
+          user_task_override: userTaskOverride.value || null
+        };
+        const result = await postJson("/api/demo/run", payload);
+        
+        if (result.assistant_reply) {
+           appendChatBubble('agent', result.assistant_reply);
+        } else {
+           appendChatBubble('system', '执行完毕，智能体未返回聊天文本。');
+        }
+        
+        const lastTrace = result.traces[result.traces.length - 1];
+        if(lastTrace) demoRequestId.textContent = `req: ${lastTrace.request.request_id}`;
+        
+        renderModeCompare(result);
+        renderDefenseSummary(result);
+        
+        await refreshApprovals();
+        await fetchAudit(); 
+        await refreshStateSnapshot();
+        
+      } catch (error) {
+        demoFinalStatus.className = "tag bad"; demoFinalStatus.textContent = "系统错误";
+        appendChatBubble('system', `❌ 错误: ${error.message}`);
+        pipeGuard.className = "pipe-node danger"; pStatusGuard.textContent = "异常";
+      }
+    });
+
+    // --- 后台状态轮询更新 ---
+    async function pollSystemStatus() {
+      try {
+        const oResult = await fetch("/api/openclaw/status").then(r => r.json());
+        document.getElementById("openclaw-backend").textContent = oResult.backend;
+        document.getElementById("openclaw-pill").className = "status-dot " + (oResult.available ? "online" : "offline");
+
+        const cResult = await fetch("/api/chain/status").then(r => r.json());
+        document.getElementById("chain-block").textContent = cResult.block_number ?? "N/A";
+        document.getElementById("chain-pill").className = "status-dot " + (cResult.available ? "available" : "offline");
+
+        const sResult = await fetch("/api/state").then(r => r.json());
+        const driftCount = sResult.drift ? sResult.drift.length : 0;
+        document.getElementById("state-drift").textContent = driftCount;
+        
+        const driftBadge = document.getElementById("state-drift-badge");
+        if(driftCount > 0) {
+            driftBadge.className = "tag bad alert-pulse";
+            driftBadge.textContent = driftCount + " 处篡改";
+        } else {
+            driftBadge.className = "tag ok";
+            driftBadge.textContent = "状态安全";
+        }
+      } catch(e) {
+        // Silently ignore polling errors
+      }
+    }
+    // 5秒轮询一次证据
+    setInterval(pollSystemStatus, 5000);
+
+    // --- 审批系统逻辑 ---
+    async function refreshApprovals() {
+      const result = await fetch("/api/approvals/pending").then(r => r.json());
+      const items = result.items || [];
+      const badge = document.getElementById("pending-count-badge");
+      const tabBtn = document.getElementById("tab-btn-approval");
+      const list = document.getElementById("approval-list");
+      
+      badge.textContent = items.length;
+      if(items.length > 0) {
+          badge.className = "tag bad alert-pulse";
+          tabBtn.style.color = "var(--color-danger)";
+      } else {
+          badge.className = "tag ok";
+          tabBtn.style.color = "";
+      }
+      
+      if (!items.length) {
+        list.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-muted); background:white; border-radius:8px; border:1px solid #eee;"><i class="fa-solid fa-check-circle" style="font-size:24px; color:#10b981; margin-bottom:8px;"></i><br>队列清空，无待审批的高危操作。</div>';
         return;
       }
-      scenarioMeta.textContent = `${scenario.description} | 预期: off=${scenario.expected_by_mode.off}, guard_only=${scenario.expected_by_mode.guard_only}, full=${scenario.expected_by_mode.full}`;
-      if (resetTask || !userTaskOverride.value.trim()) {
-        userTaskOverride.value = scenario.user_task;
+      
+      list.innerHTML = items.map(item => `
+        <div class="approval-item">
+          <div class="approval-header">
+            <span>Req: <span class="mono">${escapeHtml(item.request_id)}</span></span>
+            <span class="tag bad">风险: ${escapeHtml((item.risk_labels||[]).join(','))}</span>
+          </div>
+          <div style="font-size:0.85rem; margin-bottom:8px;">目标文件: <strong>${escapeHtml(item.target)}</strong></div>
+          <div class="diff-view" style="max-height:120px; overflow:auto;">
+             ${escapeHtml((item.diff || "")).split('\n').map(line => {
+               if(line.startsWith('+')) return `<div class="diff-line diff-add">${line}</div>`;
+               if(line.startsWith('-')) return `<div class="diff-line diff-sub">${line}</div>`;
+               return `<div class="diff-line diff-normal">${line}</div>`;
+             }).join('')}
+          </div>
+          <div class="approval-actions">
+            <button onclick="handleApproval('${item.token}', 'approve')" class="btn btn-sm btn-primary" style="width:auto; padding:6px 16px;"><i class="fa-solid fa-check"></i> 批准写入</button>
+            <button onclick="handleApproval('${item.token}', 'reject')" class="btn btn-sm btn-secondary" style="color:var(--color-danger); border-color:var(--color-danger);"><i class="fa-solid fa-ban"></i> 拒绝并回滚</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function handleApproval(token, decision) {
+      document.getElementById("approval-output").innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 正在将审批结果写入 FISCO BCOS 链...';
+      try {
+        const result = await postJson("/api/approvals/decision", { token, decision, note: `Console Web Reviewer ${approverDid}` });
+        document.getElementById("approval-output").innerHTML = `<i class="fa-solid fa-circle-check"></i> 审批已处理: 状态流转为 ${result.approval.status}`;
+        await refreshApprovals();
+        await fetchAudit();
+        await pollSystemStatus();
+      } catch (err) {
+        document.getElementById("approval-output").innerHTML = `<i class="fa-solid fa-circle-xmark" style="color:red;"></i> 失败: ${err.message}`;
       }
     }
 
-    async function refreshChainStatus() {
-      const result = await fetch("/api/chain/status").then((resp) => resp.json());
-      chainBackend.textContent = result.backend;
-      chainStatus.textContent = result.available ? "available" : `offline: ${result.message}`;
-      chainBlock.textContent = result.block_number ?? "N/A";
+    // --- 审计与实验 (强调证据 Raw Data) ---
+    async function fetchAudit() {
+      const result = await fetch('/api/audit/recent').then(r => r.json());
+      const local = document.getElementById("audit-list");
+      const chain = document.getElementById("chain-audit-list");
+      
+      local.innerHTML = (result.audit||[]).slice(0,10).map(i => `<div style="margin-bottom:8px; border-bottom:1px solid #374151; padding-bottom:8px;">[${i.request_id}] <span style="color:#fcd34d;">${i.app}.${i.action}</span> -> ${i.status}<br><span style="color:#6b7280; font-size:0.7rem;">${escapeHtml(JSON.stringify(i))}</span></div>`).join('');
+      
+      chain.innerHTML = (result.chain||[]).slice(0,10).map(i => `<div style="margin-bottom:8px; border-bottom:1px solid #374151; padding-bottom:8px;">[${i.request_id}] <span style="color:#60a5fa;">Block:${i.block_number}</span><br><span style="color:#9ca3af;">Hash: ${i.digest}</span></div>`).join('');
     }
 
-    async function refreshStateSnapshot() {
-      const snapshot = await fetch("/api/state").then((resp) => resp.json());
-      if (snapshot.drift.length) {
-        stateDrift.textContent = `检测到 ${snapshot.drift.length} 个受保护状态偏离基线，请优先检查。`;
-      } else {
-        stateDrift.textContent = "当前共享提示词、记忆和配置均与基线一致。";
+    document.getElementById("run-experiments").addEventListener("click", async () => {
+      const meta = document.getElementById("experiment-meta");
+      const agg = document.getElementById("experiment-aggregates");
+      const rec = document.getElementById("experiment-records");
+      meta.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 正在后台跑批，调用三类场景并在三种模式下进行全量验证，请等待 30-60 秒...';
+      try {
+        const result = await postJson("/api/experiments/run", {});
+        meta.innerHTML = `<i class="fa-solid fa-check"></i> 实验运行完毕！JSON 报告已保存至 <strong>${result.exported_json}</strong>`;
+        
+        agg.innerHTML = result.aggregates.map(item => `
+          <div class="metric-card">
+            <h4 style="margin:0 0 8px 0; color:var(--text-secondary); text-transform:uppercase;">${item.mode}</h4>
+            <div style="font-size:2rem; font-weight:bold; color:var(--color-primary);">${item.interception_rate}</div>
+            <div style="font-size:0.8rem; color:var(--text-muted);">成功拦截率</div>
+            <div style="font-size:0.8rem; margin-top:8px; border-top:1px solid #eee; padding-top:8px;">开销: ${item.avg_latency_ms}ms | 误报: ${item.false_positive_rate}</div>
+          </div>
+        `).join('');
+        
+        // 渲染原始明细，增加可信度
+        rec.innerHTML = `<div class="evidence-title">实验用例抽样执行结果 (Raw)</div>`;
+        result.records.slice(0, 15).forEach(item => {
+           rec.innerHTML += `
+             <div class="raw-evidence" style="background:#f8fafc; color:#1f2937; border:1px solid #e5e7eb;">
+                <strong>${item.sample_id} [${item.mode}]</strong> - Result: ${item.actual_result} | BlockLayer: ${item.blocked_layer || 'None'}<br>
+                <span style="color:var(--text-muted);">${item.reason || '-'}</span>
+             </div>
+           `;
+        });
+        
+      } catch (err) {
+        meta.innerHTML = `<i class="fa-solid fa-xmark"></i> 运行失败: ${err.message}`;
       }
-      if (stateTarget.value) {
-        stateContent.value = snapshot.targets[stateTarget.value] || "";
-      }
-    }
-
-    runDemoButton.addEventListener("click", async () => {
-      demoOutput.textContent = "运行中...";
-      const payload = {
-        scenario_id: scenarioSelect.value,
-        mode: modeSelect.value,
-        use_real_openclaw: useRealOpenClaw.checked,
-        user_task_override: userTaskOverride.value || null
-      };
-      const result = await postJson("/api/demo/run", payload);
-      demoOutput.textContent = JSON.stringify(result, null, 2);
     });
 
-    experimentButton.addEventListener("click", async () => {
-      experimentOutput.textContent = "运行中...";
-      const result = await postJson("/api/experiments/run", {});
-      experimentOutput.textContent = JSON.stringify(result, null, 2);
-    });
-
-    stateTarget.addEventListener("change", async () => {
-      await refreshStateSnapshot();
-    });
+    // Event Bindings
+    document.getElementById("refresh-approvals").addEventListener("click", refreshApprovals);
+    document.getElementById("refresh-audit").addEventListener("click", fetchAudit);
 
     document.getElementById("submit-state").addEventListener("click", async () => {
-      stateOutput.textContent = "提交中...";
-      const result = await postJson("/api/state/update", {
-        target: stateTarget.value,
-        content: stateContent.value,
-        mode: modeSelect.value,
-        approval_token: approvalToken.value || null
-      });
-      stateOutput.textContent = JSON.stringify(result, null, 2);
-      await refreshStateSnapshot();
+      const out = document.getElementById("state-submit-output");
+      out.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 提交越权写入申请中...';
+      try {
+        const payload = {
+          target: document.getElementById("state-target").value,
+          content: document.getElementById("state-content").value,
+          mode: modeSelect.value,
+          approval_token: document.getElementById("approval-token").value || null
+        };
+        const result = await postJson("/api/demo/state/request", payload);
+        const submitResult = await postJson("/api/state/update", result);
+        out.innerHTML = JSON.stringify(submitResult, null, 2); // 原始 JSON 证据
+        await refreshApprovals();
+        await fetchAudit();
+        await pollSystemStatus();
+      } catch (err) {
+        out.innerHTML = `<i class="fa-solid fa-xmark"></i> 失败: ${err.message}`;
+      }
     });
 
-    refreshAuditButton.addEventListener("click", async () => {
-      const result = await fetch("/api/audit/recent").then((resp) => resp.json());
-      auditList.innerHTML = "";
-      result.audit.forEach((item) => {
-        const row = document.createElement("div");
-        row.className = "audit-item";
-        row.innerHTML = `<div>${item.request_id}</div><div>${item.status} / ${item.blocked_layer || "none"}</div><div>${item.app}.${item.action}</div><div>${item.message}</div>`;
-        auditList.appendChild(row);
-      });
+    document.getElementById("load-request-trace").addEventListener("click", async () => {
+      const val = document.getElementById("request-filter").value.trim();
+      if(!val) return;
+      const result = await fetch(`/api/audit/recent?request_id=${val}`).then(r=>r.json());
+      document.getElementById("request-trace-output").innerHTML = `查找到 ${result.audit.length} 条本地日志和 ${result.chain.length} 条链上存证。<br><pre class="raw-evidence" style="background:#f3f4f6; color:#111;">${JSON.stringify(result, null, 2)}</pre>`;
     });
 
-    refreshChainButton.addEventListener("click", refreshChainStatus);
-    scenarioSelect.addEventListener("change", () => syncScenarioView(true));
+    document.getElementById("clear-approval-token").addEventListener("click", () => {
+      document.getElementById("approval-token").value = "";
+    });
+    
+    document.getElementById("state-target").addEventListener("change", async () => {
+       const sResult = await fetch("/api/state").then(r => r.json());
+       if (sResult.targets && sResult.targets[document.getElementById("state-target").value]) {
+           document.getElementById("state-content").value = sResult.targets[document.getElementById("state-target").value];
+       }
+    });
 
-    syncScenarioView(true);
-    refreshStateSnapshot();
+    // Init Page
+    selectScenario(scenarios[0].scenario_id); 
+    refreshApprovals();
+    fetchAudit();
+    pollSystemStatus();
+
   </script>
 </body>
 </html>

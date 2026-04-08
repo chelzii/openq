@@ -4,7 +4,9 @@ import base64
 import csv
 import hashlib
 import json
+import os
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +23,9 @@ def read_json(path: Path, default: Any) -> Any:
 
 def write_json(path: Path, payload: Any) -> None:
     ensure_parent(path)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    temp_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(temp_path, path)
 
 
 def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
