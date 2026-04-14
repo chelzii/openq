@@ -80,9 +80,34 @@ class OpenQFlowTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["final_status"], "executed")
         self.assertIsNone(payload["blocked_layer"])
+        self.assertEqual(payload["openclaw_plan"]["backend"], "demo_debug_planner")
+        self.assertFalse(payload["openclaw_plan"]["degraded"])
+        self.assertTrue(payload["plan_assessment"]["matches_oracle"])
+        self.assertEqual(payload["plan_assessment"]["planned_actions"], ["mail.read_message"])
         guard = payload["traces"][-1]["response"]["guard"]
         self.assertIn(guard["embedding_model"], {"BAAI/bge-base-zh-v1.5", "hashing_fallback"})
         self.assertIn(guard["decision_stage"], {"embedding", "reranker"})
+
+    def test_openclaw_prompt_uses_planning_constraints_instead_of_steps(self) -> None:
+        scenario = self.app.state.container.orchestrator.scenario_map()["normal_mail_summary"]
+        prompt = self.app.state.container.orchestrator.openclaw._build_prompt(scenario)
+        self.assertNotIn("本场景候选动作", prompt)
+        self.assertNotIn("模式:", prompt)
+        self.assertNotIn("steps", prompt)
+        self.assertIn("mail.read_message", prompt)
+        self.assertIn("mail-001", prompt)
+        self.assertIn("app 与 action 必须分开填写", prompt)
+
+    def test_openclaw_normalizes_action_key_leak_from_model_output(self) -> None:
+        response_text = (
+            '{"assistant_reply":"ok","calls":[{"tool_name":"call_app_api","resource_type":"state",'
+            '"app":"state","action":"state.update_prompt","args":{"target":"prompt/shared.txt","content":"safe"},'
+            '"metadata":{}}]}'
+        )
+        plan = self.app.state.container.orchestrator.openclaw._parse_plan(response_text)
+        self.assertEqual(plan.calls[0].app, "state")
+        self.assertEqual(plan.calls[0].action, "update_prompt")
+        self.assertEqual(plan.calls[0].resource_type.value, "state")
 
     def test_prompt_injection_blocked_by_guard(self) -> None:
         response = self.client.post(
@@ -318,6 +343,65 @@ class OpenQFlowTests(unittest.TestCase):
         self.assertTrue(audit_payload["request_trace"]["assistant_reply"])
         self.assertTrue(audit_payload["request_trace"]["traces"])
 
+    def test_dashboard_snapshot_returns_unified_logs(self) -> None:
+        self.client.post(
+            "/api/demo/run",
+            json={"scenario_id": "normal_mail_summary", "mode": "full", "use_real_openclaw": False},
+        )
+        dashboard = self.client.get("/api/dashboard").json()
+        self.assertIn("openclaw_status", dashboard)
+        self.assertIn("chain_status", dashboard)
+        self.assertIn("state", dashboard)
+        self.assertIn("pending_approvals", dashboard)
+        self.assertIn("logs", dashboard)
+        self.assertTrue(dashboard["logs"])
+        self.assertTrue({item["source"] for item in dashboard["logs"]} & {"audit", "chain", "realtime", "request_trace"})
+
+    def test_frontend_logs_are_ingested_into_dashboard(self) -> None:
+        response = self.client.post(
+            "/api/client/logs",
+            json={
+                "events": [
+                    {
+                        "kind": "console",
+                        "level": "warn",
+                        "message": "browser warning",
+                        "source": "frontend",
+                        "url": "http://testserver/",
+                        "page": "/",
+                        "context": {"component": "demo"},
+                    }
+                ]
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["count"], 1)
+        dashboard = self.client.get("/api/dashboard").json()
+        self.assertTrue(any(item["source"] == "frontend" for item in dashboard["logs"]))
+        self.assertTrue(any(item["kind"] == "frontend_log" for item in dashboard["logs"]))
+
+    def test_openclaw_retries_with_repair_prompt_when_response_has_no_json(self) -> None:
+        scenario = self.app.state.container.orchestrator.scenario_map()["safe_prompt_update"]
+        calls = iter([
+            "当然可以，我会更新共享提示词模板并保留最小权限约束。",
+            '{"assistant_reply":"ok","calls":[{"tool_name":"call_app_api","resource_type":"state","app":"state","action":"update_prompt","args":{"target":"prompt/shared.txt","content":"safe"},"metadata":{}}]}',
+        ])
+
+        async def fake_request_chat_reply(*args, **kwargs):
+            return next(calls)
+
+        with self.allow_chain_authorization():
+            with patch.object(self.app.state.container.orchestrator.openclaw, "_request_chat_reply", side_effect=fake_request_chat_reply):
+                result = self.client.post(
+                    "/api/demo/run",
+                    json={"scenario_id": scenario.scenario_id, "mode": "full", "use_real_openclaw": True},
+                )
+        self.assertEqual(result.status_code, 200)
+        payload = result.json()
+        self.assertEqual(payload["openclaw_plan"]["backend"], "openclaw_ws")
+        self.assertTrue(payload["openclaw_plan"]["raw_response"])
+        self.assertEqual(payload["openclaw_plan"]["calls"][0]["action"], "update_prompt")
+
     def test_mode_compare_returns_actual_results_for_all_modes(self) -> None:
         response = self.client.post(
             "/api/demo/run",
@@ -353,12 +437,32 @@ class OpenQFlowTests(unittest.TestCase):
         )
         payload = response.json()
         self.assertEqual(payload["did"], self.app.state.container.chain.demo_identity().did)
+        self.assertEqual(payload["metadata"]["debug_source"], "demo_console_state_request")
         self.assertTrue(payload["signature"])
         self.assertTrue(payload["payload_hash"])
 
         index_html = self.client.get("/").text
         self.assertNotIn("private_key", index_html)
         self.assertNotIn(self.app.state.container.chain.demo_identity().private_key, index_html)
+
+    def test_public_scenarios_endpoint_does_not_expose_oracle_or_debug_plan(self) -> None:
+        payload = self.client.get("/api/scenarios").json()
+        first = payload["items"][0]
+        self.assertIn("scenario_id", first)
+        self.assertIn("title", first)
+        self.assertNotIn("debug_plan", first)
+        self.assertNotIn("evaluation_oracle", first)
+        self.assertNotIn("planning_constraints", first)
+
+    def test_demo_run_response_does_not_expose_oracle_or_debug_plan(self) -> None:
+        payload = self.client.post(
+            "/api/demo/run",
+            json={"scenario_id": "normal_mail_summary", "mode": "full", "use_real_openclaw": False},
+        ).json()
+        self.assertIn("scenario", payload)
+        self.assertNotIn("debug_plan", payload["scenario"])
+        self.assertNotIn("evaluation_oracle", payload["scenario"])
+        self.assertNotIn("planning_constraints", payload["scenario"])
 
     def test_real_openclaw_failure_returns_gateway_error(self) -> None:
         with patch.object(

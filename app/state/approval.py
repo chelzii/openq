@@ -4,14 +4,17 @@ from dataclasses import dataclass
 from pathlib import Path
 import secrets
 import time
+from typing import Any
 
 from app.core.utils import read_json, write_json
+from app.core.realtime import RealtimeEventJournal
 from app.schemas import ApprovalView
 
 
 @dataclass
 class ApprovalService:
     approval_store: Path
+    events: RealtimeEventJournal | None = None
 
     def _read(self) -> dict[str, dict[str, str | list[str] | None]]:
         return read_json(self.approval_store, {})
@@ -52,6 +55,7 @@ class ApprovalService:
         }
         approvals[token] = record
         self._write(approvals)
+        self._publish("approval", {"action": "issued", "approval": {"token": token, **record}})
         return ApprovalView.model_validate({"token": token, **record})
 
     def get(self, token: str) -> ApprovalView | None:
@@ -82,6 +86,7 @@ class ApprovalService:
         payload["decision_note"] = note
         approvals[token] = payload
         self._write(approvals)
+        self._publish("approval", {"action": "decided", "approval": {"token": token, **payload}})
         return ApprovalView.model_validate({"token": token, **payload})
 
     def consume(self, token: str | None, request_id: str, payload_hash: str) -> ApprovalView | None:
@@ -98,7 +103,13 @@ class ApprovalService:
         payload["status"] = "consumed"
         approvals[token] = payload
         self._write(approvals)
+        self._publish("approval", {"action": "consumed", "approval": {"token": token, **payload}})
         return ApprovalView.model_validate({"token": token, **payload})
 
     def reset(self) -> None:
         self._write({})
+        self._publish("approval", {"action": "reset"})
+
+    def _publish(self, kind: str, payload: dict[str, Any]) -> None:
+        if self.events is not None:
+            self.events.publish(kind, payload)

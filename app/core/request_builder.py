@@ -35,7 +35,7 @@ class SignedCallBuilder:
         intent: OpenClawToolCall,
         context: CallContext,
         request_id: str | None = None,
-        identity_key: str = "agent",
+        identity_key: str = "planner_adapter",
     ) -> CallAppRequest:
         identity = self.chain.identity(identity_key)
         spec = get_action_spec(intent.app, intent.action)

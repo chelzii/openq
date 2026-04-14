@@ -24,6 +24,7 @@ Thumbs.db
 .vscode/
 
 # Logs and temporary files
+logs/
 *.log
 *.tmp
 *.temp

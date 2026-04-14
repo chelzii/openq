@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OpenQ 虚拟终端安全防御</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f172a'/%3E%3Cpath d='M32 10l18 8v12c0 11-7 20-18 24C21 50 14 41 14 30V18l18-8z' fill='%2310b981'/%3E%3Cpath d='M24 31l6 6 10-12' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/style.css">
   <!-- 引入图标库 (FontAwesome) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -135,15 +136,23 @@
             <div class="chat-system">系统就绪。请在上方选择场景并点击运行。</div>
           </div>
         </div>
+
+        <div style="margin-top:20px;">
+          <div class="evidence-title"><i class="fa-solid fa-terminal"></i> 本次执行日志</div>
+          <div id="current-run-log" class="raw-evidence">等待执行。运行后会在这里展示本次请求的结论、步骤日志和审计锚点。</div>
+        </div>
       </section>
 
       <!-- 右侧：上帝安防透视视角 -->
       <section class="panel security-panel">
         <div class="security-header">
           <h2><i class="fa-solid fa-satellite-dish"></i> 系统安防透视图 (X-Ray View)</h2>
-          <div style="display:flex; gap:12px; align-items:center;">
+          <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
+            <div style="display:flex; gap:12px; align-items:center;">
              <span style="font-size:0.85rem; color:var(--text-muted);">执行终态:</span>
              <strong id="demo-final-status" class="tag neutral">等待执行</strong>
+            </div>
+            <span id="demo-final-hint" style="font-size:0.75rem; color:var(--text-muted);">绿色表示未被当前防线阻断，详细结果请看本次执行日志。</span>
           </div>
         </div>
 
@@ -243,13 +252,13 @@
     <section class="bottom-panel">
       <!-- 选项卡按钮 -->
       <div class="tabs-header">
-        <button class="tab-btn active" onclick="switchTab('tab-experiments')"><i class="fa-solid fa-chart-line"></i> 消融实验分析</button>
-        <button class="tab-btn" onclick="switchTab('tab-audits')"><i class="fa-solid fa-magnifying-glass-chart"></i> 结构化审计与链存证</button>
-        <button class="tab-btn" onclick="switchTab('tab-approvals')" id="tab-btn-approval">
+        <button class="tab-btn active" onclick="switchTab(this, 'tab-experiments')"><i class="fa-solid fa-chart-line"></i> 消融实验分析</button>
+        <button class="tab-btn" onclick="switchTab(this, 'tab-audits')"><i class="fa-solid fa-magnifying-glass-chart"></i> 统一日志与链存证</button>
+        <button class="tab-btn" onclick="switchTab(this, 'tab-approvals')" id="tab-btn-approval">
            <i class="fa-solid fa-triangle-exclamation"></i> 篡改审批台
            <span class="tag warn" style="margin-left:8px;" id="pending-count-badge">{{ pending_approvals|length }}</span>
         </button>
-        <button class="tab-btn" onclick="switchTab('tab-state')">
+        <button class="tab-btn" onclick="switchTab(this, 'tab-state')">
            <i class="fa-solid fa-wrench"></i> 底层状态监控 
            <span id="state-drift-badge" class="tag neutral" style="margin-left:8px;">检测中</span>
         </button>
@@ -272,7 +281,7 @@
         <div id="experiment-records" class="record-list" style="max-height:350px;"></div>
       </div>
 
-      <!-- 面板 2：审计日志 -->
+      <!-- 面板 2：统一日志 -->
       <div id="tab-audits" class="tab-content">
         <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom: 16px;">
           <div style="flex:1; max-width:400px;">
@@ -282,18 +291,16 @@
               <button id="load-request-trace" class="btn btn-secondary"><i class="fa-solid fa-search"></i> 检索</button>
             </div>
           </div>
-          <button id="refresh-audit" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate"></i> 刷新全局日志</button>
+          <button id="refresh-audit" class="btn btn-secondary btn-sm"><i class="fa-solid fa-rotate"></i> 刷新统一视图</button>
         </div>
         <div id="request-trace-output" style="margin-bottom:16px; font-size:0.85rem; font-weight:bold; color:var(--color-primary);"></div>
-        
         <div class="defense-grid">
-          <div class="defense-card">
-            <h3><i class="fa-solid fa-file-lines"></i> 本地结构化日志 (Raw)</h3>
-            <div id="audit-list" class="record-list" style="background:#111827; padding:12px; border-radius:6px; color:#a7f3d0; font-family:var(--font-mono);"></div>
-          </div>
-          <div class="defense-card">
-            <h3><i class="fa-solid fa-link"></i> FISCO BCOS 链上摘要存证 (Raw)</h3>
-            <div id="chain-audit-list" class="record-list" style="background:#111827; padding:12px; border-radius:6px; color:#93c5fd; font-family:var(--font-mono);"></div>
+          <div class="defense-card full-width">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:8px;">
+              <h3 style="margin:0;"><i class="fa-solid fa-timeline"></i> 统一事件时间线</h3>
+              <div id="dashboard-log-summary" class="tag neutral">等待刷新</div>
+            </div>
+            <div id="unified-log-list" class="record-list" style="background:#111827; padding:12px; border-radius:6px; color:#e5e7eb; font-family:var(--font-mono); max-height:420px; overflow:auto;"></div>
           </div>
         </div>
       </div>
@@ -352,10 +359,10 @@
   <!-- JavaScript 交互逻辑 -->
   <script>
     // --- 界面交互：选项卡 ---
-    function switchTab(tabId) {
+    function switchTab(button, tabId) {
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-      event.currentTarget.classList.add('active');
+      if (button && button.classList) button.classList.add('active');
       document.getElementById(tabId).classList.add('active');
     }
 
@@ -364,6 +371,12 @@
     const initialPendingApprovals = {{ pending_approvals|tojson }};
     const approverDid = {{ approver_identity.did|tojson }};
     const scenarioMap = Object.fromEntries(scenarios.map((item) => [item.scenario_id, item]));
+    const initialEventSeq = {{ event_seq|tojson }};
+    let liveRunLines = [];
+    let eventStream = null;
+    let dashboardRefreshTimer = null;
+    let dashboardRefreshPromise = null;
+    let dashboardSnapshot = null;
 
     // DOMs
     const scenarioSelect = document.getElementById("scenario"); // hidden
@@ -374,7 +387,9 @@
     // Chat UI
     const chatContainer = document.getElementById("chat-container");
     const demoFinalStatus = document.getElementById("demo-final-status");
+    const demoFinalHint = document.getElementById("demo-final-hint");
     const demoRequestId = document.getElementById("demo-request-id");
+    const currentRunLog = document.getElementById("current-run-log");
     
     // Pipeline Nodes
     const pipeGuard = document.getElementById("pipe-guard");
@@ -404,6 +419,10 @@
     const stateNoDiff = document.getElementById("state-no-diff");
     const modeCompareContainer = document.getElementById("mode-compare-container");
     const modeCompare = document.getElementById("mode-compare");
+    const unifiedLogList = document.getElementById("unified-log-list");
+    const dashboardLogSummary = document.getElementById("dashboard-log-summary");
+    const pendingCountBadge = document.getElementById("pending-count-badge");
+    const approvalTabButton = document.getElementById("tab-btn-approval");
     
     // HTTP Helper
     async function postJson(url, payload) {
@@ -415,6 +434,127 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || JSON.stringify(result));
       return result;
+    }
+
+    const clientLogEndpoint = "/api/client/logs";
+    const clientLogQueue = [];
+    let clientLogFlushTimer = null;
+    let clientLogFlushInFlight = false;
+    let consoleBridgeInstalled = false;
+
+    function truncateText(value, maxLength = 1200) {
+      const text = String(value ?? "");
+      return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
+    }
+
+    function safeConsoleValue(value) {
+      if (value instanceof Error) {
+        return truncateText(`${value.name}: ${value.message}${value.stack ? `\n${value.stack}` : ""}`);
+      }
+      if (value === null || value === undefined) return String(value);
+      if (typeof value === "string") return truncateText(value);
+      if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value);
+      try {
+        const seen = new WeakSet();
+        return truncateText(JSON.stringify(value, (key, item) => {
+          if (item instanceof Error) {
+            return { name: item.name, message: item.message, stack: item.stack };
+          }
+          if (typeof item === "object" && item !== null) {
+            if (seen.has(item)) return "[Circular]";
+            seen.add(item);
+          }
+          return item;
+        }));
+      } catch {
+        return truncateText(Object.prototype.toString.call(value));
+      }
+    }
+
+    function queueClientLog(kind, level, message, context = {}) {
+      clientLogQueue.push({
+        kind,
+        level,
+        message: truncateText(message, 1600),
+        source: "frontend",
+        url: location.href,
+        page: location.pathname,
+        context,
+      });
+      if (clientLogFlushTimer) return;
+      clientLogFlushTimer = setTimeout(() => {
+        clientLogFlushTimer = null;
+        flushClientLogs();
+      }, 200);
+    }
+
+    function emitClientLog(kind, level, message, context = {}) {
+      queueClientLog(kind, level, message, context);
+    }
+
+    async function flushClientLogs() {
+      if (clientLogFlushInFlight || !clientLogQueue.length) return;
+      clientLogFlushInFlight = true;
+      const batch = clientLogQueue.splice(0, 20);
+      const body = JSON.stringify({ events: batch });
+      try {
+        if (navigator.sendBeacon) {
+          const ok = navigator.sendBeacon(clientLogEndpoint, new Blob([body], { type: "application/json" }));
+          if (ok) {
+            return;
+          }
+        }
+        const response = await fetch(clientLogEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          keepalive: true,
+        });
+        if (!response.ok) {
+          clientLogQueue.unshift(...batch);
+        }
+      } catch {
+        clientLogQueue.unshift(...batch);
+      } finally {
+        clientLogFlushInFlight = false;
+        if (clientLogQueue.length) {
+          clientLogFlushTimer = setTimeout(() => {
+            clientLogFlushTimer = null;
+            flushClientLogs();
+          }, 500);
+        }
+      }
+    }
+
+    function installConsoleBridge() {
+      if (consoleBridgeInstalled) return;
+      consoleBridgeInstalled = true;
+      ["log", "info", "warn", "error"].forEach((level) => {
+        const original = console[level].bind(console);
+        console[level] = (...args) => {
+          try {
+            queueClientLog("console", level, args.map(safeConsoleValue).join(" "), {
+              args: args.map(safeConsoleValue),
+            });
+          } catch (err) {
+            original("client log bridge failed", err);
+          }
+          return original(...args);
+        };
+      });
+      window.addEventListener("error", (event) => {
+        queueClientLog("window_error", "error", event.message || "window error", {
+          filename: event.filename,
+          lineno: event.lineno,
+          colno: event.colno,
+        });
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        queueClientLog("unhandledrejection", "error", safeConsoleValue(event.reason), {});
+      });
+      window.addEventListener("beforeunload", () => {
+        flushClientLogs();
+      });
     }
 
     function escapeHtml(value) {
@@ -447,6 +587,29 @@
       `;
     }
 
+    function finalStatusText(status, blockedLayer) {
+      if (status === "executed") return "执行完成";
+      if (status === "blocked") return blockedLayer ? `已阻断 · ${blockedLayer}` : "已阻断";
+      if (status === "error") return "系统错误";
+      return String(status || "未知状态").toUpperCase();
+    }
+
+    function finalStatusHintText(status, blockedLayer, response) {
+      if (status === "executed") {
+        const summary = response && response.result && response.result.summary
+          ? `执行结果: ${response.result.summary}`
+          : "请求已通过当前防线并被执行";
+        return `${summary}。绿色不等于“无需看日志”。`;
+      }
+      if (status === "blocked") {
+        return blockedLayer ? `请求已在 ${blockedLayer} 层阻断。` : "请求已被系统阻断。";
+      }
+      if (status === "error") {
+        return "系统在处理过程中出现异常，请查看本次执行日志和审计记录。";
+      }
+      return "请结合本次执行日志判断结果。";
+    }
+
     // --- 场景卡片选择 ---
     function selectScenario(id) {
       document.querySelectorAll('.scenario-card').forEach(card => card.classList.remove('active'));
@@ -456,6 +619,10 @@
       scenarioSelect.value = id;
       const scenario = scenarioMap[id];
       if (scenario) {
+        emitClientLog("ui_action", "info", "scenario selected", {
+          scenario_id: id,
+          scenario_title: scenario.title,
+        });
         userTaskOverride.value = scenario.user_task;
         // 清空终端聊天
         chatContainer.innerHTML = `
@@ -480,6 +647,9 @@
       pStatusExec.textContent = "等待";
       demoFinalStatus.className = "tag neutral";
       demoFinalStatus.textContent = "等待执行";
+      demoFinalHint.textContent = "绿色表示未被当前防线阻断，详细结果请看本次执行日志。";
+      currentRunLog.textContent = "等待执行。运行后会在这里展示本次请求的结论、步骤日志和审计锚点。";
+      liveRunLines = [];
       modeCompareContainer.style.display = "none";
       
       // Reset details
@@ -519,6 +689,51 @@
       }
     }
 
+    function renderCurrentRunLog(result) {
+      const traces = Array.isArray(result.traces) ? result.traces : [];
+      const lastTrace = traces[traces.length - 1];
+      if (!lastTrace) {
+        currentRunLog.textContent = "本次没有生成执行轨迹。";
+        return;
+      }
+
+      const response = lastTrace.response || {};
+      const request = lastTrace.request || {};
+      const traceLines = traces.map((trace, index) => {
+        const req = trace.request || {};
+        const res = trace.response || {};
+        const stateNote = res.state_change
+          ? ` | state=${res.state_change.approval_status || (res.state_change.rollback_performed ? "rolled_back" : (res.state_change.applied ? "applied" : "pending"))}`
+          : "";
+        return `${String(index + 1).padStart(2, "0")}. ${req.app}.${req.action} -> ${res.status || "unknown"}${res.blocked_layer ? ` [${res.blocked_layer}]` : ""} | ${res.message || "-"} | ${res.latency_ms ?? "-"} ms${stateNote}`;
+      }).join("\n");
+
+      const condensed = {
+        request_id: request.request_id,
+        final_status: result.final_status,
+        blocked_layer: result.blocked_layer,
+        summary: result.summary,
+        openclaw_backend: result.openclaw_plan && result.openclaw_plan.backend,
+        openclaw_degraded: !!(result.openclaw_plan && result.openclaw_plan.degraded),
+        openclaw_degraded_reason: result.openclaw_plan && result.openclaw_plan.degraded_reason,
+        app_result: response.result,
+        audit: response.audit,
+        state_change: response.state_change,
+      };
+
+      currentRunLog.innerHTML = `
+        <div style="margin-bottom:10px;">
+          <strong>结论:</strong> ${escapeHtml(finalStatusText(result.final_status, result.blocked_layer))}
+          <span style="color:var(--text-muted);"> | Req: ${escapeHtml(request.request_id || "N/A")}</span>
+        </div>
+        <div style="margin-bottom:10px; color:var(--text-secondary);">${escapeHtml(finalStatusHintText(result.final_status, result.blocked_layer, response))}</div>
+        <div class="evidence-title" style="margin-top:0;">步骤日志</div>
+        <pre class="raw-evidence" style="margin-top:8px;">${escapeHtml(traceLines || "无步骤轨迹")}</pre>
+        <div class="evidence-title" style="margin-top:12px;">请求摘要</div>
+        <pre class="raw-evidence" style="margin-top:8px;">${escapeHtml(JSON.stringify(condensed, null, 2))}</pre>
+      `;
+    }
+
     // --- 核心渲染：防御解析 (证据层加强) ---
     function renderDefenseSummary(result) {
       const lastTrace = result.traces[result.traces.length - 1];
@@ -529,6 +744,9 @@
       const state = response.state_change || {};
       const finalStatus = result.final_status || "executed";
       const blockedLayer = result.blocked_layer || null;
+      const chainUnavailable = auth && auth.chain_available === false;
+      const chainBlocked = blockedLayer === "chain";
+      const chainDegradedAllowed = !!auth.degraded_allowed;
 
       // 1. Guard Layer Visualization
       const mode = modeSelect.value;
@@ -552,7 +770,7 @@
         else guardSimBar.className = "score-bar";
         
         guardRisk.textContent = guard.risk_type || "None";
-        guardReason.innerHTML = JSON.stringify(guard, null, 2); // 原始 JSON 证据
+        guardReason.textContent = JSON.stringify(guard, null, 2); // 原始 JSON 证据
       }
 
       // 2. Chain Auth Layer
@@ -563,28 +781,37 @@
         pipeChain.className = "pipe-node skipped"; pStatusChain.textContent = "未到达";
         chainReason.textContent = "请求已在第一层被阻断，未进入 FISCO BCOS 网关。";
       } else {
-        const isChainBlocked = blockedLayer === "auth";
-        pipeChain.className = `pipe-node ${isChainBlocked ? 'danger' : 'success'}`;
-        pStatusChain.textContent = isChainBlocked ? "验权失败" : "校验通过";
+        if (chainUnavailable) {
+          pipeChain.className = `pipe-node ${chainDegradedAllowed ? 'success' : 'danger'}`;
+          pStatusChain.textContent = chainDegradedAllowed ? "链降级放行" : "链不可用";
+          chainVerified.className = "tag warn";
+          chainVerified.textContent = "链不可用";
+          chainAllowed.className = `tag ${chainDegradedAllowed ? 'warn' : 'bad'}`;
+          chainAllowed.textContent = chainDegradedAllowed ? "只读降级" : "未放行";
+        } else {
+          pipeChain.className = `pipe-node ${chainBlocked ? 'danger' : 'success'}`;
+          pStatusChain.textContent = chainBlocked ? "验权失败" : "校验通过";
+          chainVerified.className = `tag ${auth.verified ? 'ok' : 'bad'}`;
+          chainVerified.textContent = auth.verified ? "合法" : "无效";
+          chainAllowed.className = `tag ${auth.permission_allowed ? 'ok' : 'bad'}`;
+          chainAllowed.textContent = auth.permission_allowed ? "已授权" : "越权";
+        }
+
+        chainAuditStatus.textContent = response.audit && response.audit.chain_receipt ? "写入成功" : "失败";
         
-        chainVerified.className = `tag ${auth.verified ? 'ok' : 'bad'}`;
-        chainVerified.textContent = auth.verified ? "合法" : "无效";
-        chainAllowed.className = `tag ${auth.permission_allowed ? 'ok' : 'bad'}`;
-        chainAllowed.textContent = auth.permission_allowed ? "已授权" : "越权";
-        chainAuditStatus.textContent = result.audit_written ? "写入成功" : "失败";
-        
-        chainReason.innerHTML = JSON.stringify(auth, null, 2); // 原始 JSON 证据
+        chainReason.textContent = JSON.stringify(auth, null, 2); // 原始 JSON 证据
       }
 
       // 3. Sandbox / State Execution Layer
-      if (blockedLayer === "guard" || blockedLayer === "auth") {
+      if (blockedLayer === "guard" || blockedLayer === "chain") {
         pipeSandbox.className = "pipe-node danger"; pStatusExec.textContent = "被阻断";
       } else {
         pipeSandbox.className = "pipe-node success"; pStatusExec.textContent = "执行完成";
       }
       
       demoFinalStatus.className = pillClass(finalStatus);
-      demoFinalStatus.textContent = finalStatus.toUpperCase();
+      demoFinalStatus.textContent = finalStatusText(finalStatus, blockedLayer);
+      demoFinalHint.textContent = finalStatusHintText(finalStatus, blockedLayer, response);
 
       // 4. State Diff Rendering
       if (state.target) {
@@ -611,15 +838,60 @@
       }
     }
 
+    async function refreshStateSnapshot() {
+      await refreshDashboard(true);
+    }
+
+    async function loadRequestTrace(requestId) {
+      if (!requestId) return;
+      emitClientLog("ui_action", "info", "request trace lookup", {
+        request_id: requestId,
+      });
+      document.getElementById("request-filter").value = requestId;
+      const result = await fetch(`/api/audit/recent?request_id=${encodeURIComponent(requestId)}`).then(r => r.json());
+      const bundle = result.request_trace;
+      const timeline = Array.isArray(result.timeline) ? result.timeline : [];
+      const summary = [
+        `Request ID: ${requestId}`,
+        `本地日志 ${result.audit.length} 条`,
+        `链上存证 ${result.chain.length} 条`,
+        `统一时间线 ${timeline.length} 条`,
+        bundle && bundle.summary ? `摘要: ${bundle.summary}` : null
+      ].filter(Boolean).join(" | ");
+      document.getElementById("request-trace-output").innerHTML = `
+        ${escapeHtml(summary)}<br>
+        <pre class="raw-evidence" style="background:#f3f4f6; color:#111;">${escapeHtml(JSON.stringify({
+          request_trace: bundle,
+          audit: result.audit,
+          chain: result.chain,
+          approvals: result.approvals,
+          timeline
+        }, null, 2))}</pre>
+      `;
+    }
+
     // --- 运行主演示逻辑 ---
     document.getElementById("run-demo").addEventListener("click", async () => {
       resetPipeline();
       const id = scenarioSelect.value;
       if(!id) return alert("请先选择场景！");
+      emitClientLog("ui_action", "info", "run demo clicked", {
+        scenario_id: id,
+        mode: modeSelect.value,
+        use_real_openclaw: useRealOpenClaw.checked,
+      });
       
       demoFinalStatus.className = "tag warn";
       demoFinalStatus.textContent = "系统处理中...";
       demoRequestId.textContent = "req: pending";
+      currentRunLog.innerHTML = `
+        <div style="margin-bottom:10px;">
+          <strong>结论:</strong> 运行中
+          <span style="color:var(--text-muted);"> | 正在接收实时步骤日志</span>
+        </div>
+        <div class="evidence-title" style="margin-top:0;">步骤日志</div>
+        <pre class="raw-evidence" id="live-step-log" style="margin-top:8px;">等待 OpenClaw 和网关返回步骤...</pre>
+      `;
       
       // Spinner
       pipeGuard.className = "pipe-node active"; pStatusGuard.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
@@ -645,71 +917,52 @@
         
         renderModeCompare(result);
         renderDefenseSummary(result);
+        renderCurrentRunLog(result);
         
-        await refreshApprovals();
-        await fetchAudit(); 
-        await refreshStateSnapshot();
+        await refreshDashboard(true);
+        if (lastTrace && lastTrace.request && lastTrace.request.request_id) {
+          await loadRequestTrace(lastTrace.request.request_id);
+        }
         
       } catch (error) {
         demoFinalStatus.className = "tag bad"; demoFinalStatus.textContent = "系统错误";
+        demoFinalHint.textContent = "请求执行失败，请查看错误信息。";
+        currentRunLog.textContent = `执行失败: ${error.message}`;
         appendChatBubble('system', `❌ 错误: ${error.message}`);
         pipeGuard.className = "pipe-node danger"; pStatusGuard.textContent = "异常";
       }
     });
 
-    // --- 后台状态轮询更新 ---
-    async function pollSystemStatus() {
-      try {
-        const oResult = await fetch("/api/openclaw/status").then(r => r.json());
-        document.getElementById("openclaw-backend").textContent = oResult.backend;
-        document.getElementById("openclaw-pill").className = "status-dot " + (oResult.available ? "online" : "offline");
-
-        const cResult = await fetch("/api/chain/status").then(r => r.json());
-        document.getElementById("chain-block").textContent = cResult.block_number ?? "N/A";
-        document.getElementById("chain-pill").className = "status-dot " + (cResult.available ? "available" : "offline");
-
-        const sResult = await fetch("/api/state").then(r => r.json());
-        const driftCount = sResult.drift ? sResult.drift.length : 0;
-        document.getElementById("state-drift").textContent = driftCount;
-        
-        const driftBadge = document.getElementById("state-drift-badge");
-        if(driftCount > 0) {
-            driftBadge.className = "tag bad alert-pulse";
-            driftBadge.textContent = driftCount + " 处篡改";
-        } else {
-            driftBadge.className = "tag ok";
-            driftBadge.textContent = "状态安全";
-        }
-      } catch(e) {
-        // Silently ignore polling errors
+    function appendLiveTraceLine(line) {
+      if (!line) return;
+      liveRunLines.push(line);
+      const el = document.getElementById("live-step-log");
+      if (el) {
+        el.textContent = liveRunLines.join("\n");
       }
     }
-    // 5秒轮询一次证据
-    setInterval(pollSystemStatus, 5000);
 
-    // --- 审批系统逻辑 ---
-    async function refreshApprovals() {
-      const result = await fetch("/api/approvals/pending").then(r => r.json());
-      const items = result.items || [];
-      const badge = document.getElementById("pending-count-badge");
-      const tabBtn = document.getElementById("tab-btn-approval");
+    function renderApprovalQueue(items) {
+      const badge = pendingCountBadge;
+      const tabBtn = approvalTabButton;
       const list = document.getElementById("approval-list");
-      
-      badge.textContent = items.length;
-      if(items.length > 0) {
-          badge.className = "tag bad alert-pulse";
-          tabBtn.style.color = "var(--color-danger)";
+      const safeItems = Array.isArray(items) ? items : [];
+
+      badge.textContent = safeItems.length;
+      if (safeItems.length > 0) {
+        badge.className = "tag bad alert-pulse";
+        tabBtn.style.color = "var(--color-danger)";
       } else {
-          badge.className = "tag ok";
-          tabBtn.style.color = "";
+        badge.className = "tag ok";
+        tabBtn.style.color = "";
       }
-      
-      if (!items.length) {
+
+      if (!safeItems.length) {
         list.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-muted); background:white; border-radius:8px; border:1px solid #eee;"><i class="fa-solid fa-check-circle" style="font-size:24px; color:#10b981; margin-bottom:8px;"></i><br>队列清空，无待审批的高危操作。</div>';
         return;
       }
-      
-      list.innerHTML = items.map(item => `
+
+      list.innerHTML = safeItems.map(item => `
         <div class="approval-item">
           <div class="approval-header">
             <span>Req: <span class="mono">${escapeHtml(item.request_id)}</span></span>
@@ -731,28 +984,174 @@
       `).join('');
     }
 
-    async function handleApproval(token, decision) {
-      document.getElementById("approval-output").innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 正在将审批结果写入 FISCO BCOS 链...';
+    function renderUnifiedTimeline(logs) {
+      if (!unifiedLogList) return;
+      const items = Array.isArray(logs) ? logs : [];
+      if (!items.length) {
+        unifiedLogList.innerHTML = '<div style="padding:20px; text-align:center; color:#9ca3af; background:#0b1220; border:1px solid #1f2937; border-radius:8px;">暂无统一日志</div>';
+        if (dashboardLogSummary) {
+          dashboardLogSummary.className = "tag neutral";
+          dashboardLogSummary.textContent = "0 条日志";
+        }
+        return;
+      }
+
+      if (dashboardLogSummary) {
+        const sourceCount = items.reduce((acc, item) => {
+          const key = item.source || "other";
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }, {});
+        dashboardLogSummary.className = "tag ok";
+        dashboardLogSummary.textContent = `${items.length} 条 | frontend ${sourceCount.frontend || 0} · audit ${sourceCount.audit || 0} · chain ${sourceCount.chain || 0} · approval ${sourceCount.approval || 0}`;
+      }
+
+      unifiedLogList.innerHTML = items.map((item) => {
+        const sourceClass = {
+          frontend: "tag ok",
+          realtime: "tag ok",
+          request_trace: "tag warn",
+          audit: "tag neutral",
+          approval: "tag warn",
+          chain: "tag bad",
+        }[item.source] || "tag neutral";
+        const meta = [
+          item.request_id ? `Req:${escapeHtml(item.request_id)}` : null,
+          item.status ? `Status:${escapeHtml(item.status)}` : null,
+          item.blocked_layer ? `Layer:${escapeHtml(item.blocked_layer)}` : null,
+          item.block_number != null ? `Block:${escapeHtml(item.block_number)}` : null,
+        ].filter(Boolean).join(" | ");
+        return `
+          <div style="margin-bottom:10px; border-bottom:1px solid #1f2937; padding-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start;">
+              <div>
+                <span class="tag ${sourceClass.split(' ').pop() || 'neutral'}" style="margin-right:8px;">${escapeHtml(item.source || "log")}</span>
+                <strong style="color:#e5e7eb;">${escapeHtml(item.title || item.kind || "log")}</strong>
+              </div>
+              <span style="font-size:0.7rem; color:#94a3b8;">${escapeHtml(item.timestamp || "")}</span>
+            </div>
+            <div style="margin-top:4px; color:#cbd5e1;">${escapeHtml(item.summary || "")}</div>
+            <div style="margin-top:4px; font-size:0.72rem; color:#94a3b8;">${escapeHtml(meta)}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderDashboardSnapshot(result) {
+      dashboardSnapshot = result || null;
+      const openclaw = result && result.openclaw_status ? result.openclaw_status : {};
+      const chain = result && result.chain_status ? result.chain_status : {};
+      const state = result && result.state ? result.state : {};
+      const approvals = result && Array.isArray(result.pending_approvals) ? result.pending_approvals : [];
+      const logs = result && Array.isArray(result.logs) ? result.logs : [];
+
+      document.getElementById("openclaw-backend").textContent = openclaw.backend || "N/A";
+      document.getElementById("openclaw-pill").className = "status-dot " + (openclaw.available ? "online" : "offline");
+      document.getElementById("chain-block").textContent = chain.block_number ?? "N/A";
+      document.getElementById("chain-pill").className = "status-dot " + (chain.available ? "available" : "offline");
+
+      const driftCount = state.drift ? state.drift.length : 0;
+      document.getElementById("state-drift").textContent = driftCount;
+      const driftBadge = document.getElementById("state-drift-badge");
+      if (driftCount > 0) {
+        driftBadge.className = "tag bad alert-pulse";
+        driftBadge.textContent = `${driftCount} 处篡改`;
+      } else {
+        driftBadge.className = "tag ok";
+        driftBadge.textContent = "状态安全";
+      }
+
+      renderApprovalQueue(approvals);
+      renderUnifiedTimeline(logs);
+    }
+
+    async function refreshDashboard(force = false) {
+      if (dashboardRefreshPromise) {
+        if (!force) return dashboardRefreshPromise;
+        try {
+          await dashboardRefreshPromise;
+        } catch (e) {
+          // Ignore the previous refresh failure; try again below.
+        }
+      }
+      const run = (async () => {
+        const result = await fetch("/api/dashboard?limit=30").then(r => r.json());
+        renderDashboardSnapshot(result);
+        return result;
+      })();
+      dashboardRefreshPromise = run;
       try {
-        const result = await postJson("/api/approvals/decision", { token, decision, note: `Console Web Reviewer ${approverDid}` });
-        document.getElementById("approval-output").innerHTML = `<i class="fa-solid fa-circle-check"></i> 审批已处理: 状态流转为 ${result.approval.status}`;
-        await refreshApprovals();
-        await fetchAudit();
-        await pollSystemStatus();
-      } catch (err) {
-        document.getElementById("approval-output").innerHTML = `<i class="fa-solid fa-circle-xmark" style="color:red;"></i> 失败: ${err.message}`;
+        return await run;
+      } catch (e) {
+        console.warn("dashboard refresh failed", e);
+        return dashboardSnapshot;
+      } finally {
+        if (dashboardRefreshPromise === run) {
+          dashboardRefreshPromise = null;
+        }
       }
     }
 
-    // --- 审计与实验 (强调证据 Raw Data) ---
+    function scheduleRefresh() {
+      if (dashboardRefreshTimer) return;
+      dashboardRefreshTimer = setTimeout(async () => {
+        dashboardRefreshTimer = null;
+      await refreshDashboard(true);
+      }, 250);
+    }
+
+    function connectEventStream() {
+      if (eventStream) return;
+      eventStream = new EventSource(`/api/events/stream?since=${encodeURIComponent(initialEventSeq)}`);
+      eventStream.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          const kind = payload.kind;
+          if (kind === "demo_trace") {
+            appendLiveTraceLine(payload.payload.line);
+          }
+          if (kind === "demo_run" || kind === "audit" || kind === "approval" || kind === "frontend_log") {
+            scheduleRefresh();
+          }
+        } catch (err) {
+          console.warn("realtime event parse failed", err);
+        }
+      };
+      eventStream.onerror = () => {
+        if (eventStream) {
+          eventStream.close();
+          eventStream = null;
+        }
+        setTimeout(connectEventStream, 3000);
+      };
+    }
+
+    async function handleApproval(token, decision) {
+      document.getElementById("approval-output").innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 正在将审批结果写入 FISCO BCOS 链...';
+      emitClientLog("ui_action", "info", "approval decision submitted", {
+        token,
+        decision,
+      });
+      try {
+        const result = await postJson("/api/approvals/decision", { token, decision, note: `Console Web Reviewer ${approverDid}` });
+        document.getElementById("approval-output").innerHTML = `<i class="fa-solid fa-circle-check"></i> 审批已处理: 状态流转为 ${result.approval.status}`;
+        await refreshDashboard(true);
+      } catch (err) {
+        document.getElementById("approval-output").innerHTML = `<i class="fa-solid fa-circle-xmark" style="color:red;"></i> 失败: ${escapeHtml(err.message)}`;
+      }
+    }
+
+    // --- 审计与实验 (统一面板) ---
     async function fetchAudit() {
-      const result = await fetch('/api/audit/recent').then(r => r.json());
-      const local = document.getElementById("audit-list");
-      const chain = document.getElementById("chain-audit-list");
-      
-      local.innerHTML = (result.audit||[]).slice(0,10).map(i => `<div style="margin-bottom:8px; border-bottom:1px solid #374151; padding-bottom:8px;">[${i.request_id}] <span style="color:#fcd34d;">${i.app}.${i.action}</span> -> ${i.status}<br><span style="color:#6b7280; font-size:0.7rem;">${escapeHtml(JSON.stringify(i))}</span></div>`).join('');
-      
-      chain.innerHTML = (result.chain||[]).slice(0,10).map(i => `<div style="margin-bottom:8px; border-bottom:1px solid #374151; padding-bottom:8px;">[${i.request_id}] <span style="color:#60a5fa;">Block:${i.block_number}</span><br><span style="color:#9ca3af;">Hash: ${i.digest}</span></div>`).join('');
+      return refreshDashboard(true);
+    }
+
+    async function refreshApprovals() {
+      return refreshDashboard(true);
+    }
+
+    async function pollSystemStatus() {
+      return refreshDashboard(true);
     }
 
     document.getElementById("run-experiments").addEventListener("click", async () => {
@@ -762,14 +1161,14 @@
       meta.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 正在后台跑批，调用三类场景并在三种模式下进行全量验证，请等待 30-60 秒...';
       try {
         const result = await postJson("/api/experiments/run", {});
-        meta.innerHTML = `<i class="fa-solid fa-check"></i> 实验运行完毕！JSON 报告已保存至 <strong>${result.exported_json}</strong>`;
+        meta.innerHTML = `<i class="fa-solid fa-check"></i> 实验运行完毕！JSON 报告已保存至 <strong>${escapeHtml(result.exported_json)}</strong>`;
         
         agg.innerHTML = result.aggregates.map(item => `
           <div class="metric-card">
-            <h4 style="margin:0 0 8px 0; color:var(--text-secondary); text-transform:uppercase;">${item.mode}</h4>
-            <div style="font-size:2rem; font-weight:bold; color:var(--color-primary);">${item.interception_rate}</div>
+            <h4 style="margin:0 0 8px 0; color:var(--text-secondary); text-transform:uppercase;">${escapeHtml(item.mode)}</h4>
+            <div style="font-size:2rem; font-weight:bold; color:var(--color-primary);">${escapeHtml(item.interception_rate)}</div>
             <div style="font-size:0.8rem; color:var(--text-muted);">成功拦截率</div>
-            <div style="font-size:0.8rem; margin-top:8px; border-top:1px solid #eee; padding-top:8px;">开销: ${item.avg_latency_ms}ms | 误报: ${item.false_positive_rate}</div>
+            <div style="font-size:0.8rem; margin-top:8px; border-top:1px solid #eee; padding-top:8px;">开销: ${escapeHtml(item.avg_latency_ms)}ms | 误报: ${escapeHtml(item.false_positive_rate)}</div>
           </div>
         `).join('');
         
@@ -778,24 +1177,29 @@
         result.records.slice(0, 15).forEach(item => {
            rec.innerHTML += `
              <div class="raw-evidence" style="background:#f8fafc; color:#1f2937; border:1px solid #e5e7eb;">
-                <strong>${item.sample_id} [${item.mode}]</strong> - Result: ${item.actual_result} | BlockLayer: ${item.blocked_layer || 'None'}<br>
-                <span style="color:var(--text-muted);">${item.reason || '-'}</span>
+                <strong>${escapeHtml(item.sample_id)} [${escapeHtml(item.mode)}]</strong> - Result: ${escapeHtml(item.actual_result)} | BlockLayer: ${escapeHtml(item.blocked_layer || 'None')}<br>
+                <span style="color:var(--text-muted);">${escapeHtml(item.reason || '-')}</span>
              </div>
            `;
         });
         
       } catch (err) {
-        meta.innerHTML = `<i class="fa-solid fa-xmark"></i> 运行失败: ${err.message}`;
+        meta.innerHTML = `<i class="fa-solid fa-xmark"></i> 运行失败: ${escapeHtml(err.message)}`;
       }
     });
 
     // Event Bindings
-    document.getElementById("refresh-approvals").addEventListener("click", refreshApprovals);
-    document.getElementById("refresh-audit").addEventListener("click", fetchAudit);
+    document.getElementById("refresh-approvals").addEventListener("click", refreshDashboard);
+    document.getElementById("refresh-audit").addEventListener("click", refreshDashboard);
 
     document.getElementById("submit-state").addEventListener("click", async () => {
       const out = document.getElementById("state-submit-output");
       out.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 提交越权写入申请中...';
+      emitClientLog("ui_action", "info", "state submit clicked", {
+        target: document.getElementById("state-target").value,
+        mode: modeSelect.value,
+        has_approval_token: !!document.getElementById("approval-token").value,
+      });
       try {
         const payload = {
           target: document.getElementById("state-target").value,
@@ -805,20 +1209,17 @@
         };
         const result = await postJson("/api/demo/state/request", payload);
         const submitResult = await postJson("/api/state/update", result);
-        out.innerHTML = JSON.stringify(submitResult, null, 2); // 原始 JSON 证据
-        await refreshApprovals();
-        await fetchAudit();
-        await pollSystemStatus();
+        out.innerHTML = `<pre class="raw-evidence" style="background:#f3f4f6; color:#111;">${escapeHtml(JSON.stringify(submitResult, null, 2))}</pre>`; // 原始 JSON 证据
+        await refreshDashboard(true);
       } catch (err) {
-        out.innerHTML = `<i class="fa-solid fa-xmark"></i> 失败: ${err.message}`;
+        out.innerHTML = `<i class="fa-solid fa-xmark"></i> 失败: ${escapeHtml(err.message)}`;
       }
     });
 
     document.getElementById("load-request-trace").addEventListener("click", async () => {
       const val = document.getElementById("request-filter").value.trim();
       if(!val) return;
-      const result = await fetch(`/api/audit/recent?request_id=${val}`).then(r=>r.json());
-      document.getElementById("request-trace-output").innerHTML = `查找到 ${result.audit.length} 条本地日志和 ${result.chain.length} 条链上存证。<br><pre class="raw-evidence" style="background:#f3f4f6; color:#111;">${JSON.stringify(result, null, 2)}</pre>`;
+      await loadRequestTrace(val);
     });
 
     document.getElementById("clear-approval-token").addEventListener("click", () => {
@@ -833,10 +1234,16 @@
     });
 
     // Init Page
+    installConsoleBridge();
+    emitClientLog("page", "info", "dashboard initialized", {
+      event_seq: initialEventSeq,
+      scenario_count: scenarios.length,
+      current_path: location.pathname,
+    });
     selectScenario(scenarios[0].scenario_id); 
-    refreshApprovals();
-    fetchAudit();
-    pollSystemStatus();
+    renderApprovalQueue(initialPendingApprovals);
+    refreshDashboard();
+    connectEventStream();
 
   </script>
 </body>

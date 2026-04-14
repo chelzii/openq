@@ -15,9 +15,23 @@ from app.schemas import ChainStatusView
 
 
 CONTRACT_NAME = "OpenQRegistry"
-SEED_VERSION = 2
+SEED_VERSION = 3
 DEFAULT_IDENTITY_PERMISSIONS = {
     "agent": {
+        "mail.list_messages": True,
+        "mail.read_message": True,
+        "bank.get_balance": True,
+        "bank.transfer": False,
+        "gallery.list_assets": True,
+        "gallery.read_asset": False,
+        "weather.get_weather": True,
+        "weather.get_alert": True,
+        "state.update_memory": True,
+        "state.update_prompt": True,
+        "state.update_config": True,
+        "approval.decide": False,
+    },
+    "planner_adapter": {
         "mail.list_messages": True,
         "mail.read_message": True,
         "bank.get_balance": True,
@@ -126,6 +140,15 @@ class FiscoBcosService:
                 "private_key": agent.private_key,
             }
 
+        if "planner_adapter" not in payload:
+            planner = RequestSigner.generate_identity("did:openq:planner-adapter-001", "OpenQ Planner Adapter")
+            payload["planner_adapter"] = {
+                "did": planner.did,
+                "label": planner.label,
+                "public_key": planner.public_key,
+                "private_key": planner.private_key,
+            }
+
         if "approver" not in payload:
             approver = RequestSigner.generate_identity("did:openq:approver-001", "OpenQ Approval Operator")
             payload["approver"] = {
@@ -171,8 +194,11 @@ class FiscoBcosService:
             raise KeyError(f"unknown identity key: {key}")
         return identity
 
+    def planner_identity(self) -> Identity:
+        return self.identity("planner_adapter")
+
     def demo_identity(self) -> Identity:
-        return self.identity("agent")
+        return self.planner_identity()
 
     def approver_identity(self) -> Identity:
         return self.identity("approver")
@@ -216,7 +242,7 @@ class FiscoBcosService:
 
     def _query_block_number(self) -> tuple[int | None, str]:
         try:
-            output = self._run_console(["getBlockNumber"], timeout=30)
+            output = self._run_console(["getBlockNumber"], timeout=8)
         except ChainConsoleError as exc:
             return None, str(exc)
         block_raw = self._extract_last(r"^\[group0\]: /apps>\s*(\d+)\s*$", output)
@@ -251,6 +277,27 @@ class FiscoBcosService:
             message=status.message,
             checked_at=status.checked_at,
             endpoints=status.endpoints,
+        )
+
+    def status_snapshot(self) -> ChainStatusView:
+        if self._cached_status is not None:
+            status = self._cached_status
+            return ChainStatusView(
+                available=status.available,
+                backend=status.backend,
+                block_number=status.block_number,
+                message=status.message,
+                checked_at=status.checked_at,
+                endpoints=status.endpoints,
+            )
+        checked_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        return ChainStatusView(
+            available=False,
+            backend="fisco_bcos_pending",
+            block_number=None,
+            message="status not probed yet",
+            checked_at=checked_at,
+            endpoints=[f"127.0.0.1:{port}" for port in self.probe_ports],
         )
 
     def _call_return_values(self, command: str) -> list[str]:

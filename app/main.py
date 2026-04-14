@@ -16,6 +16,7 @@ from app.chain.fisco import FiscoBcosService
 from app.core.experiments import DemoOrchestrator
 from app.core.gateway import GatewayService, SandboxDispatcher
 from app.core.openclaw import OpenClawFacade
+from app.core.realtime import RealtimeEventJournal
 from app.core.request_builder import SignedCallBuilder
 from app.core.settings import Settings
 from app.guards.embedding import BGEEmbeddingEncoder, BGEReranker, HashingEmbeddingEncoder, HashingReranker
@@ -36,6 +37,7 @@ class AppContainer:
     gateway: GatewayService
     orchestrator: DemoOrchestrator
     builder: SignedCallBuilder
+    events: RealtimeEventJournal
 
 
 @lru_cache(maxsize=1)
@@ -54,9 +56,10 @@ def build_container() -> AppContainer:
         chain.warmup_registry()
     except Exception:
         pass
+    events = RealtimeEventJournal()
     audit = AuditService(settings.audit_log, settings.request_trace_store)
     state_store = ProtectedStateStore(settings.state_dir)
-    approvals = ApprovalService(settings.approval_store)
+    approvals = ApprovalService(settings.approval_store, events=events)
     integrity = StateIntegrityService(state_store, settings.baseline_file, approvals)
     dispatcher = SandboxDispatcher(
         mail=MailApp(settings.messages_fixture),
@@ -85,6 +88,7 @@ def build_container() -> AppContainer:
         chain=chain,
         dispatcher=dispatcher,
         audit=audit,
+        events=events,
     )
     builder = SignedCallBuilder(signer=signer, chain=chain)
     orchestrator = DemoOrchestrator(
@@ -94,6 +98,7 @@ def build_container() -> AppContainer:
         openclaw=OpenClawFacade(settings.real_openclaw_url, settings.openclaw_state_dir),
         scenario_fixture=settings.scenario_fixture,
         audit=audit,
+        events=events,
     )
     return AppContainer(
         settings=settings,
@@ -106,6 +111,7 @@ def build_container() -> AppContainer:
         gateway=gateway,
         orchestrator=orchestrator,
         builder=builder,
+        events=events,
     )
 
 

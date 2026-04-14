@@ -10,6 +10,7 @@ from app.chain.crypto import RequestSigner
 from app.chain.fisco import FiscoBcosService
 from app.core.actions import get_action_spec
 from app.core.request_builder import signed_payload_from_request
+from app.core.realtime import RealtimeEventJournal
 from app.guards.intent import IntentGuard
 from app.schemas import AppCallResult, AuditView, AuthResult, CallAppRequest, CallAppResponse, Mode, ResourceType
 from app.state.store import StateIntegrityService
@@ -46,6 +47,12 @@ class SandboxDispatcher:
         if request.resource_type == ResourceType.APP:
             return self._execute_app(request), None
         return self._execute_state(request)
+
+    def reset_runtime(self) -> None:
+        for service in (self.mail, self.bank, self.gallery, self.weather):
+            reset = getattr(service, "reset", None)
+            if callable(reset):
+                reset()
 
     def _validated_request(self, request: CallAppRequest) -> CallAppRequest:
         spec = get_action_spec(request.app, request.action)
@@ -100,6 +107,7 @@ class GatewayService:
     chain: FiscoBcosService
     dispatcher: SandboxDispatcher
     audit: AuditService
+    events: RealtimeEventJournal | None = None
 
     def handle_call(self, request: CallAppRequest) -> CallAppResponse:
         started = time.perf_counter()
@@ -258,6 +266,21 @@ class GatewayService:
                 "latency_ms": latency_ms,
             }
         )
+        if self.events is not None:
+            self.events.publish(
+                "audit",
+                {
+                    "request_id": request.request_id,
+                    "session_id": request.session_id,
+                    "status": status,
+                    "blocked_layer": blocked_layer,
+                    "message": message,
+                    "permission_key": permission_key,
+                    "risk_level": risk_level,
+                    "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                    "audit": audit_entry,
+                },
+            )
         chain_receipt = None
         chain_backend = None
         chain_block_number = None

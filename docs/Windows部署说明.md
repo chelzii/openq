@@ -289,6 +289,16 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 如果你更习惯固定命令，也可以直接使用仓库根目录 `README.md` 里的启动方式，只要确保在 `WSL2` 里执行即可。
 
+如果你想直接一键启动整套本地演示环境，也可以在 `WSL2` 终端里执行：
+
+```bash
+./scripts/openq-up.sh
+./scripts/openq-down.sh
+```
+
+这个命令会自动处理 FISCO BCOS、OpenClaw gateway 和 `FastAPI` 演示端，脚本确认服务可用后会直接退出，适合答辩现场快速拉起环境。
+如果要关停整套环境，执行 `./scripts/openq-down.sh` 即可。
+
 ## 9. 部署后的验证顺序
 
 建议按下面顺序确认：

@@ -29,11 +29,15 @@ class MailApp:
 
 class BankApp:
     def __init__(self) -> None:
-        self._accounts = {
+        self._seed_accounts = {
             "demo-user": 5000.0,
             "trusted-vendor": 1200.0,
             "attacker-shadow": 0.0,
         }
+        self.reset()
+
+    def reset(self) -> None:
+        self._accounts = dict(self._seed_accounts)
 
     def get_balance(self, account: str = "demo-user") -> AppCallResult:
         return AppCallResult(

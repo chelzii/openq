@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Mode(str, Enum):
@@ -41,6 +41,8 @@ class CallAppRequest(BaseModel):
 
 
 class OpenClawToolCall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     tool_name: str = "call_app_api"
     resource_type: ResourceType
     app: str
@@ -50,6 +52,8 @@ class OpenClawToolCall(BaseModel):
 
 
 class OpenClawPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     assistant_reply: str
     calls: list[OpenClawToolCall]
     backend: str
@@ -129,6 +133,22 @@ class ChainStatusView(BaseModel):
     endpoints: list[str] = Field(default_factory=list)
 
 
+class UnifiedLogEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    seq: int | None = None
+    timestamp: str
+    source: str
+    kind: str
+    title: str
+    summary: str
+    request_id: str | None = None
+    status: str | None = None
+    blocked_layer: str | None = None
+    block_number: int | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class CallAppResponse(BaseModel):
     request_id: str
     mode: Mode
@@ -147,15 +167,43 @@ class CallAppResponse(BaseModel):
     approval_required: bool = False
 
 
-class ScenarioStep(BaseModel):
-    resource_type: ResourceType
-    app: str
-    action: str
-    args: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+class PlannerResourceHint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    app: str | None = None
+    resource_id: str | None = None
+    description: str = ""
+    fields: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlanningConstraints(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    relevant_apps: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    resource_hints: list[PlannerResourceHint] = Field(default_factory=list)
+
+
+class EvaluationOracle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_by_mode: dict[str, str]
+    expected_actions: list[str] = Field(default_factory=list)
+    prohibited_actions: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class ScenarioDebugPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assistant_reply: str | None = None
+    calls: list[OpenClawToolCall] = Field(default_factory=list)
 
 
 class ScenarioDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     scenario_id: str
     scenario_type: str
     title: str
@@ -164,10 +212,45 @@ class ScenarioDefinition(BaseModel):
     trusted_system_goal: str
     source_summary: str
     external_text: str = ""
-    steps: list[ScenarioStep]
-    expected_by_mode: dict[str, str]
+    planning_constraints: PlanningConstraints = Field(default_factory=PlanningConstraints)
+    evaluation_oracle: EvaluationOracle
+    debug_plan: ScenarioDebugPlan | None = None
     request_mutation: str | None = None
     chain_fault: str | None = None
+
+    @property
+    def expected_by_mode(self) -> dict[str, str]:
+        return self.evaluation_oracle.expected_by_mode
+
+
+class DashboardSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    openclaw_status: dict[str, Any]
+    chain_status: dict[str, Any]
+    state: dict[str, Any]
+    pending_approvals: list[ApprovalView] = Field(default_factory=list)
+    logs: list[UnifiedLogEntry] = Field(default_factory=list)
+    event_seq: int = 0
+
+
+class ClientLogEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    level: str = "info"
+    message: str
+    source: str = "frontend"
+    url: str | None = None
+    page: str | None = None
+    request_id: str | None = None
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClientLogBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    events: list[ClientLogEvent] = Field(default_factory=list)
 
 
 class ExecutionTrace(BaseModel):
@@ -213,11 +296,28 @@ class ApprovalView(BaseModel):
     decision_note: str | None = None
 
 
+class PlanAssessment(BaseModel):
+    planned_actions: list[str] = Field(default_factory=list)
+    matched_expected_actions: list[str] = Field(default_factory=list)
+    missing_expected_actions: list[str] = Field(default_factory=list)
+    triggered_prohibited_actions: list[str] = Field(default_factory=list)
+    matches_oracle: bool = True
+
+
+class ScenarioPublicView(BaseModel):
+    scenario_id: str
+    scenario_type: str
+    title: str
+    description: str
+    user_task: str
+
+
 class DemoRunResponse(BaseModel):
-    scenario: ScenarioDefinition
+    scenario: ScenarioPublicView
     mode: Mode
     assistant_reply: str
     openclaw_plan: OpenClawPlan
+    plan_assessment: PlanAssessment
     traces: list[ExecutionTrace]
     final_status: str
     blocked_layer: str | None = None
@@ -258,6 +358,10 @@ class ExperimentRecord(BaseModel):
     scenario_type: str
     mode: Mode
     request_id: str
+    planned_actions: list[str] = Field(default_factory=list)
+    plan_matches_oracle: bool = True
+    missing_expected_actions: list[str] = Field(default_factory=list)
+    triggered_prohibited_actions: list[str] = Field(default_factory=list)
     expected_result: str
     actual_result: str
     blocked_layer: str | None

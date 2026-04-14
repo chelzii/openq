@@ -11,6 +11,8 @@ if [[ ! -d "${NODES_DIR}" ]]; then
     exit 1
 fi
 
+bash "${SCRIPT_DIR}/ensure-docker.sh"
+
 echo "[INFO] 运行中的 FISCO 容器"
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' | grep -E 'fiscobcos|NAMES' || true
 
