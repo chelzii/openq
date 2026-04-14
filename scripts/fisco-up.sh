@@ -4,21 +4,23 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+LOG_DIR="${ROOT_DIR}/logs"
+SCRIPT_LOG="${LOG_DIR}/fisco-up.log"
 FISCO_DIR="${ROOT_DIR}/runtime-deps/fisco-portable"
 NODES_DIR="${FISCO_DIR}/nodes/127.0.0.1"
 IMAGE_TAG="fiscoorg/fiscobcos:v3.6.0"
 
 required_ports=(20200 20201 20202 20203 30300 30301 30302 30303)
 
+mkdir -p "${LOG_DIR}"
+exec > >(tee -a "${SCRIPT_LOG}") 2>&1
+
 if [[ ! -d "${NODES_DIR}" ]]; then
     echo "[ERROR] 缺少链目录 ${NODES_DIR}"
     exit 1
 fi
 
-if ! command -v docker >/dev/null 2>&1; then
-    echo "[ERROR] docker 不可用，请先安装 Docker Desktop 或 Docker Engine。"
-    exit 1
-fi
+bash "${SCRIPT_DIR}/ensure-docker.sh"
 
 if ! docker network inspect openq-fisco >/dev/null 2>&1; then
     echo "[INFO] 创建链专用 Docker 网络 openq-fisco"

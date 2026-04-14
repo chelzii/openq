@@ -1,0 +1,49 @@
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+approvals_reviewer = "user"
+model = "gpt-5.4-mini"
+model_reasoning_effort = "high"
+
+[projects]
+
+[projects."/home/chelizi/apps"]
+trust_level = "trusted"
+
+
+[projects."/home/chelizi/project/uniter"]
+trust_level = "trusted"
+
+
+[projects."/home/chelizi/project/m3fend"]
+trust_level = "trusted"
+
+
+[projects."/home/chelizi/project/AeroGen"]
+trust_level = "trusted"
+
+
+[projects."/home/chelizi/project/Caravan"]
+trust_level = "trusted"
+
+
+[projects."/home/chelizi/project/openq"]
+trust_level = "trusted"
+
+
+[projects."/home/chelizi/project/throne"]
+trust_level = "trusted"
+
+
+[notice]
+hide_full_access_warning = true
+hide_rate_limit_model_nudge = true
+
+
+[features]
+guardian_approval = true
+
+
+[caravan_runtime]
+managed = true
+repo_root = "/home/chelizi/project/openq"
+runtime_home = "/home/chelizi/project/openq/.caravan/codex-runtime/proj-6d00a31d30fe412ba6a20fe16919eec7/home"

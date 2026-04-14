@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
+import os
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -14,9 +16,12 @@ from app.chain.fisco import FiscoBcosService
 from app.core.experiments import DemoOrchestrator
 from app.core.gateway import GatewayService, SandboxDispatcher
 from app.core.openclaw import OpenClawFacade
+from app.core.realtime import RealtimeEventJournal
+from app.core.request_builder import SignedCallBuilder
 from app.core.settings import Settings
-from app.guards.embedding import BGEEmbeddingEncoder, BGEReranker
+from app.guards.embedding import BGEEmbeddingEncoder, BGEReranker, HashingEmbeddingEncoder, HashingReranker
 from app.guards.intent import IntentGuard
+from app.state.approval import ApprovalService
 from app.state.store import StateIntegrityService
 
 
@@ -28,10 +33,14 @@ class AppContainer:
     audit: AuditService
     state_store: ProtectedStateStore
     integrity: StateIntegrityService
+    approvals: ApprovalService
     gateway: GatewayService
     orchestrator: DemoOrchestrator
+    builder: SignedCallBuilder
+    events: RealtimeEventJournal
 
 
+@lru_cache(maxsize=1)
 def build_container() -> AppContainer:
     settings = Settings.load()
     signer = RequestSigner()
@@ -43,9 +52,15 @@ def build_container() -> AppContainer:
         console_script=settings.chain_console_script,
         probe_ports=settings.chain_probe_ports,
     )
-    audit = AuditService(settings.audit_log)
+    try:
+        chain.warmup_registry()
+    except Exception:
+        pass
+    events = RealtimeEventJournal()
+    audit = AuditService(settings.audit_log, settings.request_trace_store)
     state_store = ProtectedStateStore(settings.state_dir)
-    integrity = StateIntegrityService(state_store, settings.baseline_file)
+    approvals = ApprovalService(settings.approval_store, events=events)
+    integrity = StateIntegrityService(state_store, settings.baseline_file, approvals)
     dispatcher = SandboxDispatcher(
         mail=MailApp(settings.messages_fixture),
         bank=BankApp(),
@@ -54,24 +69,36 @@ def build_container() -> AppContainer:
         state_store=state_store,
         integrity=integrity,
     )
+    fallback_encoder = HashingEmbeddingEncoder()
+    guard_runtime = os.getenv("OPENQ_GUARD_RUNTIME", "formal").strip().lower()
+    if guard_runtime == "formal":
+        encoder = BGEEmbeddingEncoder(fallback=fallback_encoder)
+        reranker = BGEReranker(fallback=HashingReranker(fallback_encoder))
+    else:
+        encoder = fallback_encoder
+        reranker = HashingReranker(fallback_encoder)
     gateway = GatewayService(
         signer=signer,
         guard=IntentGuard(
-            encoder=BGEEmbeddingEncoder(),
-            reranker=BGEReranker(),
+            encoder=encoder,
+            reranker=reranker,
             calibration_fixture=settings.intent_calibration_fixture,
             calibration_report=settings.guard_calibration_report,
         ),
         chain=chain,
         dispatcher=dispatcher,
         audit=audit,
+        events=events,
     )
+    builder = SignedCallBuilder(signer=signer, chain=chain)
     orchestrator = DemoOrchestrator(
-        signer=signer,
         chain=chain,
+        builder=builder,
         gateway=gateway,
-        openclaw=OpenClawFacade(settings.real_openclaw_url),
+        openclaw=OpenClawFacade(settings.real_openclaw_url, settings.openclaw_state_dir),
         scenario_fixture=settings.scenario_fixture,
+        audit=audit,
+        events=events,
     )
     return AppContainer(
         settings=settings,
@@ -80,8 +107,11 @@ def build_container() -> AppContainer:
         audit=audit,
         state_store=state_store,
         integrity=integrity,
+        approvals=approvals,
         gateway=gateway,
         orchestrator=orchestrator,
+        builder=builder,
+        events=events,
     )
 
 

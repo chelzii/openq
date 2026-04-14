@@ -5,6 +5,7 @@
 - 需求终稿: [最终版需求文档.md](/home/chelizi/project/openq/docs/最终版需求文档.md)
 - 实现终稿: [最终版实现文档.md](/home/chelizi/project/openq/docs/最终版实现文档.md)
 - 迁移与部署: [部署与迁移说明.md](/home/chelizi/project/openq/docs/部署与迁移说明.md)
+- Windows 部署: [Windows部署说明.md](/home/chelizi/project/openq/docs/Windows部署说明.md)
 
 当前目录职责：
 
@@ -19,6 +20,11 @@
 常用命令:
 
 ```bash
+./scripts/openq-up.sh
+./scripts/openq-down.sh
+./scripts/preflight.sh
+./scripts/acceptance.sh
+./scripts/run_experiments.sh
 ./.venv/bin/python -m unittest discover -s tests -v
 ./.venv/bin/uvicorn app.main:app --reload
 ./scripts/fisco-up.sh
@@ -27,6 +33,9 @@
 ./scripts/fisco-down.sh
 ./scripts/openclaw-check.sh
 ```
+
+其中 `./scripts/openq-up.sh` 是推荐的一键启动入口，会先检查或启动 FISCO BCOS，再检查或拉起 OpenClaw gateway，最后拉起 FastAPI 演示端。脚本会在确认服务可用后退出，服务本身继续后台运行。
+`./scripts/openq-down.sh` 会按 PID、端口和进程名的顺序关停这一整套演示环境，优先清理本仓库启动的服务实例。
 
 主工程能力：
 
