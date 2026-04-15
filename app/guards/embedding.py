@@ -5,8 +5,25 @@ import math
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 from app.core.utils import tokenize
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+
+
+def _local_model_dirs() -> dict[str, Path]:
+    model_root = Path(
+        os.getenv("OPENQ_MODEL_ROOT", str(ROOT_DIR / "runtime-deps" / "models"))
+    ).expanduser()
+    return {
+        "BAAI/bge-base-zh-v1.5": Path(
+            os.getenv("OPENQ_BGE_BASE_ZH_DIR", str(model_root / "BAAI" / "bge-base-zh-v1.5"))
+        ).expanduser(),
+        "BAAI/bge-reranker-v2-m3": Path(
+            os.getenv("OPENQ_BGE_RERANKER_DIR", str(model_root / "BAAI" / "bge-reranker-v2-m3"))
+        ).expanduser(),
+    }
 
 @dataclass(frozen=True)
 class EmbeddingScore:
@@ -83,7 +100,11 @@ class HashingReranker:
 def _load_sentence_transformer(model_name: str, device: str):
     from sentence_transformers import SentenceTransformer
 
-    return SentenceTransformer(model_name, device=device, local_files_only=not _allow_remote_model_download())
+    return SentenceTransformer(
+        _resolve_model_source(model_name),
+        device=device,
+        local_files_only=not _allow_remote_model_download(),
+    )
 
 
 @lru_cache(maxsize=4)
@@ -91,7 +112,7 @@ def _load_reranker_tokenizer(model_name: str):
     from transformers import AutoTokenizer
 
     return AutoTokenizer.from_pretrained(
-        model_name,
+        _resolve_model_source(model_name),
         trust_remote_code=True,
         local_files_only=not _allow_remote_model_download(),
     )
@@ -102,7 +123,7 @@ def _load_reranker_model(model_name: str, device: str):
     from transformers import AutoModelForSequenceClassification
 
     model = AutoModelForSequenceClassification.from_pretrained(
-        model_name,
+        _resolve_model_source(model_name),
         trust_remote_code=True,
         local_files_only=not _allow_remote_model_download(),
     )
@@ -114,6 +135,13 @@ def _load_reranker_model(model_name: str, device: str):
 def _allow_remote_model_download() -> bool:
     value = os.getenv("OPENQ_GUARD_ALLOW_REMOTE_DOWNLOAD", "0").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def _resolve_model_source(model_name: str) -> str:
+    local_dir = _local_model_dirs().get(model_name)
+    if local_dir is not None and local_dir.exists():
+        return str(local_dir)
+    return model_name
 
 
 def _default_device() -> str:

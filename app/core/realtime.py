@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from threading import Lock
-import time
 from typing import Any
 
 
@@ -23,7 +23,7 @@ class RealtimeEventJournal:
             "seq": 0,
             "kind": kind,
             "payload": payload or {},
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         }
         with self._lock:
             self._seq += 1

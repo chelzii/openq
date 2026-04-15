@@ -8,7 +8,7 @@ from app.apps.services import BankApp, GalleryApp, MailApp, ProtectedStateStore,
 from app.audit.service import AuditService
 from app.chain.crypto import RequestSigner
 from app.chain.fisco import FiscoBcosService
-from app.core.actions import get_action_spec
+from app.core.actions import get_action_spec, render_state_update_content
 from app.core.request_builder import signed_payload_from_request
 from app.core.realtime import RealtimeEventJournal
 from app.guards.intent import IntentGuard
@@ -68,7 +68,8 @@ class SandboxDispatcher:
 
     def _execute_state(self, request: CallAppRequest) -> tuple[AppCallResult, Any]:
         target = request.args["target"]
-        new_content = request.args["content"]
+        current_content = self.state_store.read(target)
+        new_content = render_state_update_content(target, current_content, request.args)
         diff = self.integrity.inspect_change(
             target,
             new_content,
@@ -109,6 +110,35 @@ class GatewayService:
     audit: AuditService
     events: RealtimeEventJournal | None = None
 
+    def _publish_stage(
+        self,
+        request: CallAppRequest,
+        stage: str,
+        summary: str,
+        *,
+        status: str | None = None,
+        blocked_layer: str | None = None,
+        line: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        if self.events is None:
+            return
+        self.events.publish(
+            "gateway_trace",
+            {
+                "session_id": request.session_id,
+                "request_id": request.request_id,
+                "app": request.app,
+                "action": request.action,
+                "stage": stage,
+                "summary": summary,
+                "status": status,
+                "blocked_layer": blocked_layer,
+                "line": line or f"[{request.request_id}] {stage} {summary}",
+                **(payload or {}),
+            },
+        )
+
     def handle_call(self, request: CallAppRequest) -> CallAppResponse:
         started = time.perf_counter()
         guard_decision = None
@@ -124,17 +154,65 @@ class GatewayService:
         try:
             spec = get_action_spec(request.app, request.action)
             permission_key = spec.permission_key
+            self._publish_stage(
+                request,
+                "request_received",
+                "统一网关已接收调用请求",
+                status="received",
+                line=f"[gateway] recv {request.request_id} {request.app}.{request.action}",
+                payload={
+                    "mode": request.mode.value,
+                    "resource_type": request.resource_type.value,
+                    "permission_key": permission_key,
+                    "args": request.args,
+                },
+            )
             signed_payload = signed_payload_from_request(request)
             expected_hash = self.signer.payload_hash(signed_payload)
             if request.payload_hash != expected_hash:
+                self._publish_stage(
+                    request,
+                    "request_rejected",
+                    "payload hash mismatch",
+                    status="error",
+                    blocked_layer="system",
+                    line=f"[gateway] reject {request.request_id} payload hash mismatch",
+                )
                 raise ValueError("payload hash mismatch")
             request = self.dispatcher._validated_request(request)
+            self._publish_stage(
+                request,
+                "request_validated",
+                "请求签名与参数校验通过",
+                status="ok",
+                line=f"[gateway] validated {request.app}.{request.action}",
+                payload={"args": request.args},
+            )
             config = self.dispatcher.state_store.system_config()
             if "guard_threshold_override" in config:
                 self.guard.threshold = float(config["guard_threshold_override"])
 
             if request.mode != Mode.OFF:
+                self._publish_stage(
+                    request,
+                    "guard_started",
+                    "开始执行意图护栏",
+                    status="running",
+                    line=f"[guard] evaluating {request.app}.{request.action}",
+                )
                 guard_decision = self.guard.evaluate(request)
+                self._publish_stage(
+                    request,
+                    "guard_result",
+                    guard_decision.reason,
+                    status="blocked" if not guard_decision.allowed else "passed",
+                    blocked_layer="guard" if not guard_decision.allowed else None,
+                    line=(
+                        f"[guard] {'block' if not guard_decision.allowed else 'pass'} "
+                        f"stage={guard_decision.decision_stage} sim={guard_decision.intent_similarity:.3f}"
+                    ),
+                    payload={"guard": guard_decision.model_dump(mode="json")},
+                )
                 if not guard_decision.allowed:
                     blocked_layer = "guard"
                     status = "blocked"
@@ -152,6 +230,13 @@ class GatewayService:
                     )
 
             if request.mode == Mode.FULL:
+                self._publish_stage(
+                    request,
+                    "chain_started",
+                    "开始链上验签与验权",
+                    status="running",
+                    line=f"[chain] authorize {permission_key}",
+                )
                 auth = self.chain.authorize(signed_payload, request.signature, request.did, permission_key)
                 auth_result = AuthResult(
                     verified=auth.verified,
@@ -166,7 +251,24 @@ class GatewayService:
                 if not auth.chain_available and spec and not spec.fail_closed_on_chain_error:
                     auth_result.degraded_allowed = True
                     auth_result.reason = "chain unavailable, degraded allow for read-only action"
+                    self._publish_stage(
+                        request,
+                        "chain_result",
+                        auth_result.reason,
+                        status="degraded",
+                        line=f"[chain] degraded allow {permission_key}",
+                        payload={"auth": auth_result.model_dump(mode="json")},
+                    )
                 elif not auth.verified or not auth.permission_allowed:
+                    self._publish_stage(
+                        request,
+                        "chain_result",
+                        auth.reason,
+                        status="blocked",
+                        blocked_layer="chain",
+                        line=f"[chain] block {permission_key}: {auth.reason}",
+                        payload={"auth": auth_result.model_dump(mode="json")},
+                    )
                     blocked_layer = "chain"
                     status = "blocked"
                     message = auth.reason
@@ -181,7 +283,23 @@ class GatewayService:
                         auth=auth_result,
                         state_change=None,
                     )
+                else:
+                    self._publish_stage(
+                        request,
+                        "chain_result",
+                        auth.reason,
+                        status="passed",
+                        line=f"[chain] pass {permission_key}",
+                        payload={"auth": auth_result.model_dump(mode="json")},
+                    )
 
+            self._publish_stage(
+                request,
+                "dispatch_started",
+                "开始执行工具调用",
+                status="running",
+                line=f"[dispatch] execute {request.app}.{request.action}",
+            )
             result, state_change = self.dispatcher.execute(request)
             if state_change and not state_change.applied:
                 blocked_layer = "state"
@@ -191,10 +309,47 @@ class GatewayService:
                     if state_change.approval_status == "rejected"
                     else "protected state update requires approval"
                 )
+                self._publish_stage(
+                    request,
+                    "state_result",
+                    message,
+                    status="blocked",
+                    blocked_layer="state",
+                    line=(
+                        f"[state] block {state_change.target} "
+                        f"status={state_change.approval_status or 'blocked'}"
+                    ),
+                    payload={"state_change": state_change.model_dump(mode="json")},
+                )
             elif state_change:
                 message = "protected state updated"
+                self._publish_stage(
+                    request,
+                    "state_result",
+                    message,
+                    status="applied",
+                    line=f"[state] applied {state_change.target}",
+                    payload={"state_change": state_change.model_dump(mode="json")},
+                )
             elif auth_result and auth_result.degraded_allowed:
                 message = "request executed under degraded chain policy"
+                self._publish_stage(
+                    request,
+                    "dispatch_result",
+                    message,
+                    status="executed",
+                    line=f"[dispatch] executed degraded {request.app}.{request.action}",
+                    payload={"result": result.model_dump(mode="json") if result else None},
+                )
+            else:
+                self._publish_stage(
+                    request,
+                    "dispatch_result",
+                    message,
+                    status="executed",
+                    line=f"[dispatch] executed {request.app}.{request.action}",
+                    payload={"result": result.model_dump(mode="json") if result else None},
+                )
 
             return self._build_response(
                 request,
@@ -278,6 +433,21 @@ class GatewayService:
                     "permission_key": permission_key,
                     "risk_level": risk_level,
                     "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+                    "audit": audit_entry,
+                },
+            )
+            self.events.publish(
+                "gateway_trace",
+                {
+                    "session_id": request.session_id,
+                    "request_id": request.request_id,
+                    "app": request.app,
+                    "action": request.action,
+                    "stage": "audit_result",
+                    "summary": "审计日志已写入",
+                    "status": status,
+                    "blocked_layer": blocked_layer,
+                    "line": f"[audit] {request.request_id} {status} {message}",
                     "audit": audit_entry,
                 },
             )

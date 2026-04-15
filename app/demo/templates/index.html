@@ -18,6 +18,8 @@
       font-family: var(--font-mono);
       font-size: 0.75rem;
       overflow-x: auto;
+      overflow-y: auto;
+      max-height: 250px;
       margin-top: 8px;
     }
     .evidence-title {
@@ -66,10 +68,27 @@
       </div>
     </header>
 
+    <!-- 全局结论看板 (Global Verdict Board) -->
+    <section class="verdict-board" id="verdict-board" style="display:none;">
+      <div class="verdict-status" id="verdict-status-icon">
+        <i class="fa-solid fa-circle-question"></i>
+      </div>
+      <div class="verdict-content">
+        <h2 id="verdict-title">等待执行</h2>
+        <p id="verdict-summary" style="margin: 4px 0; color: var(--text-secondary);"></p>
+        <div class="verdict-tags">
+          <span class="tag neutral" id="verdict-oracle">实验预期: 等待</span>
+          <span class="tag neutral" id="verdict-planner">Planner: 等待</span>
+          <span class="tag neutral" id="verdict-compare-note" style="display:none;">同一计划对比</span>
+        </div>
+      </div>
+    </section>
+
     <!-- 核心双视图 -->
     <main class="main-split">
       
       <!-- 左侧：虚拟终端视角 (模拟手机设备) -->
+      <div class="left-column">
       <section class="panel terminal-panel">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
           <h2 style="margin:0; border:none;"><i class="fa-solid fa-mobile-screen"></i> 虚拟终端设备视角</h2>
@@ -112,19 +131,17 @@
               <option value="full" selected>🟢 双层协同全开 (Full)</option>
             </select>
           </div>
-          <div style="flex:1; display:flex; align-items:center; gap:6px;">
-             <input id="use-real-openclaw" type="checkbox" checked>
-             <label for="use-real-openclaw" style="margin:0; font-size:0.85rem; cursor:pointer;">连接真实大模型</label>
+          <div class="form-group" style="margin-bottom:0; flex:1;">
+            <label style="margin-bottom:2px;">规划器执行模式</label>
+            <select id="planner-mode" style="padding:6px; font-size:0.85rem;">
+              <option value="real_strict" selected>⚡ 真实严格模式 (Real Strict)</option>
+              <option value="real_debug">🧪 真实诊断模式 (Real Debug)</option>
+              <option value="demo_safe">🎬 调试保底模式 (Demo Safe)</option>
+            </select>
           </div>
         </div>
 
         <button id="run-demo" class="btn btn-primary"><i class="fa-solid fa-play"></i> 触发场景调用</button>
-
-        <!-- 恢复三模式消融对比展示区 -->
-        <div id="mode-compare-container" style="margin-top:20px; display:none;">
-          <div class="evidence-title"><i class="fa-solid fa-code-compare"></i> 三模式验证结果对比 (本次请求)</div>
-          <div id="mode-compare" class="metrics-grid" style="margin-top:8px;"></div>
-        </div>
 
         <!-- 智能体终端 UI 模拟 -->
         <div class="device-mockup" style="margin-top:24px;">
@@ -142,8 +159,10 @@
           <div id="current-run-log" class="raw-evidence">等待执行。运行后会在这里展示本次请求的结论、步骤日志和审计锚点。</div>
         </div>
       </section>
+      </div>
 
       <!-- 右侧：上帝安防透视视角 -->
+      <div class="right-column">
       <section class="panel security-panel">
         <div class="security-header">
           <h2><i class="fa-solid fa-satellite-dish"></i> 系统安防透视图 (X-Ray View)</h2>
@@ -246,20 +265,31 @@
         </div>
       </section>
       
+      <!-- 三模式消融对比展示区 -->
+      <section class="panel" id="mode-compare-container" style="margin-top:0; display:none; padding:24px; border:1px solid var(--border-color); border-radius:var(--radius-md); background:white;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h2 style="margin:0;"><i class="fa-solid fa-code-compare"></i> 三模式平行沙箱消融对比 (Ablation Compare)</h2>
+          <span class="tag neutral"><i class="fa-solid fa-info-circle"></i> 基于同一份 OpenClaw 生成计划复放</span>
+        </div>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-top:0;">注：为控制生成变量，消除大模型随机性导致的结果偏差，以下对比均基于本次推演中生成的同一份调用计划，分别在三种防线配置的隔离沙箱中平行复放的结果。</p>
+        <div id="mode-compare" class="metrics-grid" style="margin-top:16px; grid-template-columns: repeat(3, 1fr);"></div>
+      </section>
+
+      </div>
     </main>
 
     <!-- 底部功能区：实验、审批、日志 (Tabs) -->
     <section class="bottom-panel">
       <!-- 选项卡按钮 -->
       <div class="tabs-header">
-        <button class="tab-btn active" onclick="switchTab(this, 'tab-experiments')"><i class="fa-solid fa-chart-line"></i> 消融实验分析</button>
-        <button class="tab-btn" onclick="switchTab(this, 'tab-audits')"><i class="fa-solid fa-magnifying-glass-chart"></i> 统一日志与链存证</button>
+        <button class="tab-btn active" onclick="switchTab(this, 'tab-experiments')"><i class="fa-solid fa-chart-line"></i> 课题基线实验</button>
+        <button class="tab-btn" onclick="switchTab(this, 'tab-audits')"><i class="fa-solid fa-magnifying-glass-chart"></i> 请求级统一证据</button>
         <button class="tab-btn" onclick="switchTab(this, 'tab-approvals')" id="tab-btn-approval">
-           <i class="fa-solid fa-triangle-exclamation"></i> 篡改审批台
+           <i class="fa-solid fa-triangle-exclamation"></i> 安全审批
            <span class="tag warn" style="margin-left:8px;" id="pending-count-badge">{{ pending_approvals|length }}</span>
         </button>
         <button class="tab-btn" onclick="switchTab(this, 'tab-state')">
-           <i class="fa-solid fa-wrench"></i> 底层状态监控 
+           <i class="fa-solid fa-wrench"></i> 状态监控
            <span id="state-drift-badge" class="tag neutral" style="margin-left:8px;">检测中</span>
         </button>
       </div>
@@ -326,6 +356,9 @@
         <p style="font-size:0.85rem; color:var(--text-muted); margin-bottom:16px;">
            此面板证明系统具备实时的底层文件基线比对能力。系统当前检测到 <strong id="state-drift" style="color:var(--color-danger); font-size:1.1rem;">0</strong> 处异常漂移。
         </p>
+        <p style="font-size:0.82rem; color:var(--color-warning); margin:-4px 0 16px;">
+          该面板属于 <strong>debug only</strong> 工具，调用的是服务端代签辅助接口，不属于真实 OpenClaw 正式主链路。
+        </p>
         
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
           <div>
@@ -348,7 +381,7 @@
           <label style="font-size:0.85rem; font-weight:bold; display:block; margin-bottom:4px;">注入内容</label>
           <textarea id="state-content" rows="5" style="width:100%; padding:8px; border-radius:4px; border:1px solid #ccc; font-family:monospace; font-size:0.8rem;">{% for target, content in state_targets.items() %}{% if loop.first %}{{ content }}{% endif %}{% endfor %}</textarea>
         </div>
-        <button id="submit-state" class="btn btn-primary" style="margin-top:16px; width:200px;"><i class="fa-solid fa-upload"></i> 发送底层写入指令</button>
+        <button id="submit-state" class="btn btn-primary" style="margin-top:16px; width:220px;"><i class="fa-solid fa-upload"></i> 调试发送底层写入指令</button>
         <div class="evidence-title" style="margin-top:16px;">执行结果与审计回调</div>
         <div id="state-submit-output" class="raw-evidence" style="margin-top:8px;">等待操作...</div>
       </div>
@@ -374,6 +407,7 @@
     const initialEventSeq = {{ event_seq|tojson }};
     let liveRunLines = [];
     let eventStream = null;
+    let activeLiveSessionId = null;
     let dashboardRefreshTimer = null;
     let dashboardRefreshPromise = null;
     let dashboardSnapshot = null;
@@ -382,7 +416,7 @@
     const scenarioSelect = document.getElementById("scenario"); // hidden
     const userTaskOverride = document.getElementById("user-task-override");
     const modeSelect = document.getElementById("mode");
-    const useRealOpenClaw = document.getElementById("use-real-openclaw");
+    const plannerMode = document.getElementById("planner-mode");
     
     // Chat UI
     const chatContainer = document.getElementById("chat-container");
@@ -424,6 +458,24 @@
     const pendingCountBadge = document.getElementById("pending-count-badge");
     const approvalTabButton = document.getElementById("tab-btn-approval");
     
+    function formatApiErrorDetail(detail) {
+      if (!detail) return "Unknown API error";
+      if (typeof detail === "string") return detail;
+      if (Array.isArray(detail)) {
+        return detail.map((item) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object") {
+            const loc = Array.isArray(item.loc) ? item.loc.join(".") : "";
+            const msg = item.msg || JSON.stringify(item);
+            return loc ? `${loc}: ${msg}` : msg;
+          }
+          return String(item);
+        }).join(" | ");
+      }
+      if (typeof detail === "object") return JSON.stringify(detail);
+      return String(detail);
+    }
+
     // HTTP Helper
     async function postJson(url, payload) {
       const response = await fetch(url, {
@@ -432,7 +484,7 @@
         body: JSON.stringify(payload)
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.detail || JSON.stringify(result));
+      if (!response.ok) throw new Error(formatApiErrorDetail(result.detail || result));
       return result;
     }
 
@@ -490,6 +542,47 @@
 
     function emitClientLog(kind, level, message, context = {}) {
       queueClientLog(kind, level, message, context);
+    }
+
+    function createLiveSessionId() {
+      return `web-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+    }
+
+    function compactEventTime(timestamp) {
+      if (!timestamp) return "--:--:--.---";
+      const timePart = (timestamp.split("T")[1] || timestamp).replace("Z", "");
+      return timePart.slice(0, 12);
+    }
+
+    function formatLiveEventLine(kind, eventPayload, timestamp) {
+      const ts = compactEventTime(timestamp);
+      if (kind === "planning_trace") {
+        const stage = eventPayload.stage || "planning";
+        if (stage === "planning_prompt_ready") {
+          const promptSize = eventPayload.prompt ? String(eventPayload.prompt.length) : "0";
+          return `${ts} planning.prompt_ready chars=${promptSize}`;
+        }
+        if (stage === "planning_plan_ready") {
+          const callCount = Array.isArray(eventPayload.calls) ? eventPayload.calls.length : 0;
+          return `${ts} planning.plan_ready calls=${callCount} plan_hash=${eventPayload.plan_hash || "n/a"}`;
+        }
+        return `${ts} planning.${stage} status=${eventPayload.status || "ok"}`;
+      }
+      if (kind === "gateway_trace") {
+        const stage = eventPayload.stage || "gateway";
+        const requestId = eventPayload.request_id || "n/a";
+        const action = `${eventPayload.app || "app"}.${eventPayload.action || "action"}`;
+        const status = eventPayload.status || "n/a";
+        const blocked = eventPayload.blocked_layer ? ` blocked=${eventPayload.blocked_layer}` : "";
+        return `${ts} ${requestId} ${stage} ${action} status=${status}${blocked}`;
+      }
+      if (kind === "demo_trace") {
+        return `${ts} ${eventPayload.request_id || "n/a"} exec ${eventPayload.app || "app"}.${eventPayload.action || "action"} status=${eventPayload.status || "n/a"}`;
+      }
+      if (kind === "demo_run") {
+        return `${ts} demo.${eventPayload.phase || "run"} status=${eventPayload.final_status || "running"}${eventPayload.blocked_layer ? ` blocked=${eventPayload.blocked_layer}` : ""}`;
+      }
+      return `${ts} ${eventPayload.line || eventPayload.summary || kind}`;
     }
 
     async function flushClientLogs() {
@@ -571,7 +664,7 @@
       if (["blocked", "rejected", "error", "denied", "offline", "unavailable", "invalid"].some((item) => lowered.includes(item))) {
         return "tag bad";
       }
-      if (["pending", "reranker", "degraded", "running"].some((item) => lowered.includes(item))) {
+      if (["pending", "reranker", "degraded", "running", "planning_debug", "debug"].some((item) => lowered.includes(item))) {
         return "tag warn";
       }
       return "tag neutral";
@@ -590,6 +683,8 @@
     function finalStatusText(status, blockedLayer) {
       if (status === "executed") return "执行完成";
       if (status === "blocked") return blockedLayer ? `已阻断 · ${blockedLayer}` : "已阻断";
+      if (status === "planning_debug") return "规划诊断已捕获";
+      if (status === "planning_failed") return "规划失败";
       if (status === "error") return "系统错误";
       return String(status || "未知状态").toUpperCase();
     }
@@ -603,6 +698,18 @@
       }
       if (status === "blocked") {
         return blockedLayer ? `请求已在 ${blockedLayer} 层阻断。` : "请求已被系统阻断。";
+      }
+      if (status === "planning_debug") {
+        const planningError = response && response.openclaw_plan && response.openclaw_plan.planning_error
+          ? `诊断结论: ${response.openclaw_plan.planning_error}`
+          : "real_debug 已捕获 OpenClaw 输出。";
+        return `${planningError} 当前模式只保留原始响应和诊断信息，不进入执行阶段。`;
+      }
+      if (status === "planning_failed") {
+        const planningError = response && response.openclaw_plan && response.openclaw_plan.planning_error
+          ? `规划失败原因: ${response.openclaw_plan.planning_error}`
+          : "OpenClaw 未返回可执行计划。";
+        return `${planningError} 正式链路未进入执行阶段。`;
       }
       if (status === "error") {
         return "系统在处理过程中出现异常，请查看本次执行日志和审计记录。";
@@ -666,6 +773,9 @@
       stateTargetName.textContent = "无";
       stateDiffContainer.style.display = "none";
       stateNoDiff.style.display = "block";
+      
+      const board = document.getElementById("verdict-board");
+      if (board) board.style.display = "none";
     }
 
     // --- 渲染聊天气泡 ---
@@ -683,61 +793,217 @@
         modeCompareContainer.style.display = "block";
         modeCompare.innerHTML = result.mode_compare.map((item) => {
           const status = `${item.final_status}`;
-          const detail = item.blocked_layer ? `Layer: ${item.blocked_layer}` : "Fully Executed";
+          const detail = item.final_status === "planning_debug"
+            ? "Planning: debug capture only"
+            : item.planning_failed
+            ? `Planning: ${item.planning_failed_reason || "failed"}`
+            : (item.blocked_layer ? `Layer: ${item.blocked_layer}` : "Fully Executed");
           return compareCard(`[${item.mode}]`, status, detail);
         }).join("");
+      } else {
+        modeCompareContainer.style.display = "none";
       }
+    }
+
+    function formatJsonBlock(value) {
+      return escapeHtml(JSON.stringify(value ?? {}, null, 2));
+    }
+
+    function renderTraceTimeline(events) {
+      const safeEvents = Array.isArray(events) ? events : [];
+      if (!safeEvents.length) {
+        return '<div style="color:var(--text-muted);">无完整链路事件。</div>';
+      }
+      return safeEvents.map((event, idx) => {
+        const badgeClass = event.status === "blocked"
+          ? "tag bad"
+          : event.status === "passed" || event.status === "ok" || event.status === "applied" || event.status === "written"
+          ? "tag ok"
+          : event.status === "review" || event.status === "degraded"
+          ? "tag warn"
+          : "tag neutral";
+        return `
+          <details open style="margin-bottom:10px; border:1px solid #e5e7eb; border-radius:10px; background:white; overflow:hidden;">
+            <summary style="cursor:pointer; list-style:none; padding:12px 14px; background:#f8fafc; display:flex; align-items:center; justify-content:space-between; gap:8px;">
+              <span>
+                <strong>${String(idx + 1).padStart(2, "0")}. ${escapeHtml(event.title || event.stage || "event")}</strong>
+                <span style="color:var(--text-secondary); margin-left:8px;">${escapeHtml(event.summary || "")}</span>
+              </span>
+              <span class="${badgeClass}">${escapeHtml(event.status || "info")}</span>
+            </summary>
+            <div style="padding:12px 14px;">
+              <div style="font-size:0.86rem; color:var(--text-muted); margin-bottom:8px;">
+                stage=${escapeHtml(event.stage || "unknown")}${event.step_index ? ` | step=${escapeHtml(String(event.step_index))}` : ""}
+              </div>
+              <pre class="raw-evidence" style="margin:0;">${formatJsonBlock(event.payload || {})}</pre>
+            </div>
+          </details>
+        `;
+      }).join("");
+    }
+
+    function buildFullRunTimeline(result) {
+      const plan = result && result.openclaw_plan ? result.openclaw_plan : {};
+      const traces = Array.isArray(result && result.traces) ? result.traces : [];
+      const events = [];
+      events.push({
+        stage: "planning_input",
+        title: "OpenClaw Prompt",
+        summary: "发送给 OpenClaw 的完整规划 prompt",
+        status: plan.planning_prompt ? "captured" : "missing",
+        payload: {
+          planner_mode: plan.planner_mode,
+          planning_session_id: plan.planning_session_id,
+          planning_prompt: plan.planning_prompt,
+          planning_source: plan.planning_source
+        }
+      });
+      if (plan.raw_response !== undefined && plan.raw_response !== null) {
+        events.push({
+          stage: "planning_output_raw",
+          title: "OpenClaw 原始回复",
+          summary: "来自 gateway 的原始文本输出",
+          status: "captured",
+          payload: {
+            backend: plan.backend,
+            raw_response: plan.raw_response
+          }
+        });
+      }
+      events.push({
+        stage: "planning_result",
+        title: "结构化规划结果",
+        summary: result && result.planning_failed ? "规划失败" : "规划已结构化",
+        status: plan.planning_valid ? "ok" : "failed",
+        payload: {
+          assistant_reply: result ? result.assistant_reply : null,
+          plan_hash: plan.plan_hash,
+          planning_valid: plan.planning_valid,
+          planning_error: plan.planning_error,
+          planning_diagnostics: plan.diagnostics,
+          parsed_calls: plan.calls || [],
+          final_status: result ? result.final_status : null,
+          blocked_layer: result ? result.blocked_layer : null
+        }
+      });
+      traces.forEach((trace) => {
+        const req = trace.request || {};
+        const res = trace.response || {};
+        const step = trace.step_index || 0;
+        events.push({
+          stage: "tool_request",
+          title: `Step ${step} Request`,
+          summary: `${req.app || "unknown"}.${req.action || "unknown"} 请求`,
+          status: "sent",
+          step_index: step,
+          payload: req
+        });
+        if (res.guard) {
+          events.push({
+            stage: "guard_result",
+            title: `Step ${step} Guard`,
+            summary: `护栏阶段 ${res.guard.decision_stage || res.status || "unknown"}`,
+            status: res.blocked_layer === "guard" ? "blocked" : "passed",
+            step_index: step,
+            payload: res.guard
+          });
+        }
+        if (res.auth) {
+          events.push({
+            stage: "chain_result",
+            title: `Step ${step} Chain/Auth`,
+            summary: `链上验权 ${res.auth.reason || res.status || "unknown"}`,
+            status: res.blocked_layer === "chain" ? "blocked" : (res.auth.degraded_allowed ? "degraded" : "passed"),
+            step_index: step,
+            payload: res.auth
+          });
+        }
+        if (res.state_change) {
+          events.push({
+            stage: "state_result",
+            title: `Step ${step} State`,
+            summary: `状态保护 ${res.state_change.approval_status || (res.state_change.rollback_performed ? "rolled_back" : res.status || "unknown")}`,
+            status: res.blocked_layer === "state" ? "blocked" : (res.state_change.approval_required ? "review" : "applied"),
+            step_index: step,
+            payload: res.state_change
+          });
+        }
+        events.push({
+          stage: "tool_response",
+          title: `Step ${step} Result`,
+          summary: res.message || res.status || "unknown",
+          status: res.status || "unknown",
+          step_index: step,
+          payload: res
+        });
+        if (res.audit) {
+          events.push({
+            stage: "audit_result",
+            title: `Step ${step} Audit`,
+            summary: `审计锚点 ${res.audit.chain_receipt || res.audit.entry_hash || "N/A"}`,
+            status: res.audit.entry_hash ? "written" : "missing",
+            step_index: step,
+            payload: res.audit
+          });
+        }
+      });
+      return events;
     }
 
     function renderCurrentRunLog(result) {
       const traces = Array.isArray(result.traces) ? result.traces : [];
       const lastTrace = traces[traces.length - 1];
-      if (!lastTrace) {
-        currentRunLog.textContent = "本次没有生成执行轨迹。";
-        return;
-      }
-
-      const response = lastTrace.response || {};
-      const request = lastTrace.request || {};
-      const traceLines = traces.map((trace, index) => {
-        const req = trace.request || {};
-        const res = trace.response || {};
-        const stateNote = res.state_change
-          ? ` | state=${res.state_change.approval_status || (res.state_change.rollback_performed ? "rolled_back" : (res.state_change.applied ? "applied" : "pending"))}`
-          : "";
-        return `${String(index + 1).padStart(2, "0")}. ${req.app}.${req.action} -> ${res.status || "unknown"}${res.blocked_layer ? ` [${res.blocked_layer}]` : ""} | ${res.message || "-"} | ${res.latency_ms ?? "-"} ms${stateNote}`;
-      }).join("\n");
-
+      const request = lastTrace && lastTrace.request ? lastTrace.request : {};
+      const fullTimeline = buildFullRunTimeline(result);
       const condensed = {
-        request_id: request.request_id,
+        request_id: request.request_id || null,
         final_status: result.final_status,
         blocked_layer: result.blocked_layer,
         summary: result.summary,
-        openclaw_backend: result.openclaw_plan && result.openclaw_plan.backend,
-        openclaw_degraded: !!(result.openclaw_plan && result.openclaw_plan.degraded),
-        openclaw_degraded_reason: result.openclaw_plan && result.openclaw_plan.degraded_reason,
-        app_result: response.result,
-        audit: response.audit,
-        state_change: response.state_change,
+        planner_mode: result.openclaw_plan && result.openclaw_plan.planner_mode,
+        planning_source: result.openclaw_plan && result.openclaw_plan.planning_source,
+        planning_valid: result.openclaw_plan && result.openclaw_plan.planning_valid,
+        planning_error: result.openclaw_plan && result.openclaw_plan.planning_error,
+        plan_hash: result.openclaw_plan && result.openclaw_plan.plan_hash,
+        planning_session_id: result.openclaw_plan && result.openclaw_plan.planning_session_id,
+        trace_events: fullTimeline.length
       };
 
+      const headerSuffix = request.request_id ? ` | Req: ${escapeHtml(request.request_id)}` : "";
+      const executionHint = fullTimeline.length
+        ? `本次日志包含规划输入、OpenClaw 原始回复、结构化计划、每一步工具调用与 guard/chain/state/audit 结果。`
+        : `当前没有可展示的执行事件。`;
       currentRunLog.innerHTML = `
         <div style="margin-bottom:10px;">
           <strong>结论:</strong> ${escapeHtml(finalStatusText(result.final_status, result.blocked_layer))}
-          <span style="color:var(--text-muted);"> | Req: ${escapeHtml(request.request_id || "N/A")}</span>
+          <span style="color:var(--text-muted);">${headerSuffix}</span>
         </div>
-        <div style="margin-bottom:10px; color:var(--text-secondary);">${escapeHtml(finalStatusHintText(result.final_status, result.blocked_layer, response))}</div>
-        <div class="evidence-title" style="margin-top:0;">步骤日志</div>
-        <pre class="raw-evidence" style="margin-top:8px;">${escapeHtml(traceLines || "无步骤轨迹")}</pre>
-        <div class="evidence-title" style="margin-top:12px;">请求摘要</div>
-        <pre class="raw-evidence" style="margin-top:8px;">${escapeHtml(JSON.stringify(condensed, null, 2))}</pre>
+        <div style="margin-bottom:10px; color:var(--text-secondary);">${escapeHtml(executionHint)}</div>
+        <div class="evidence-title" style="margin-top:0;">完整链路日志</div>
+        <div style="margin-top:8px;">${renderTraceTimeline(fullTimeline)}</div>
+        <div class="evidence-title" style="margin-top:12px;">运行摘要</div>
+        <pre class="raw-evidence" style="margin-top:8px;">${formatJsonBlock(condensed)}</pre>
       `;
     }
 
     // --- 核心渲染：防御解析 (证据层加强) ---
     function renderDefenseSummary(result) {
       const lastTrace = result.traces[result.traces.length - 1];
-      if (!lastTrace) return;
+      if (!lastTrace) {
+        demoFinalStatus.className = pillClass(result.final_status);
+        demoFinalStatus.textContent = finalStatusText(result.final_status, result.blocked_layer);
+        demoFinalHint.textContent = finalStatusHintText(result.final_status, result.blocked_layer, result);
+        if (result.final_status === "planning_failed" || result.final_status === "planning_debug") {
+          const isDebug = result.final_status === "planning_debug";
+          pipeGuard.className = `pipe-node ${isDebug ? 'warning' : 'danger'}`; pStatusGuard.textContent = isDebug ? "规划诊断" : "规划失败";
+          pipeChain.className = "pipe-node skipped"; pStatusChain.textContent = "未到达";
+          pipeSandbox.className = "pipe-node skipped"; pStatusExec.textContent = "未执行";
+          guardDecision.className = `tag ${isDebug ? 'warn' : 'bad'}`; guardDecision.textContent = result.final_status;
+          guardReason.textContent = JSON.stringify(result.openclaw_plan || {}, null, 2);
+          chainReason.textContent = isDebug ? "诊断模式已在规划阶段截停，未进入链上验权。" : "规划阶段失败，未进入链上验权。";
+        }
+        return;
+      }
       const response = lastTrace.response || {};
       const guard = response.guard || {};
       const auth = response.auth || {};
@@ -838,6 +1104,72 @@
       }
     }
 
+    function renderVerdictBoard(result) {
+      const board = document.getElementById("verdict-board");
+      const icon = document.getElementById("verdict-status-icon");
+      const title = document.getElementById("verdict-title");
+      const summary = document.getElementById("verdict-summary");
+      const oracle = document.getElementById("verdict-oracle");
+      const planner = document.getElementById("verdict-planner");
+      const compareNote = document.getElementById("verdict-compare-note");
+
+      if (!board) return;
+      board.style.display = "flex";
+      board.className = "verdict-board";
+      
+      let statusText = "";
+      if (result.final_status === "executed") {
+        board.classList.add("success");
+        icon.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
+        statusText = result.scenario.scenario_type === "benign" ? "✅ 正常请求：执行成功" : "⚠️ 危险：攻击已被越权执行";
+        if (result.scenario.scenario_type !== "benign") {
+           board.classList.remove("success");
+           board.classList.add("danger");
+           icon.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
+        }
+      } else if (result.final_status === "blocked") {
+        board.classList.add("blocked");
+        icon.innerHTML = '<i class="fa-solid fa-shield"></i>';
+        statusText = `⛔ 攻击已被成功阻断 (${result.blocked_layer === 'guard' ? '意图护栏拦截' : '链上权限拦截'})`;
+      } else if (result.final_status === "planning_failed") {
+        board.classList.add("danger");
+        icon.innerHTML = '<i class="fa-solid fa-plug-circle-xmark"></i>';
+        statusText = "❌ OpenClaw 规划失败，正式链路已 fail-closed";
+      } else if (result.final_status === "planning_debug") {
+        board.classList.add("blocked");
+        icon.innerHTML = '<i class="fa-solid fa-flask"></i>';
+        statusText = "🧪 OpenClaw 诊断模式：仅捕获规划，不执行";
+      } else {
+        board.classList.add("danger");
+        icon.innerHTML = '<i class="fa-solid fa-circle-xmark"></i>';
+        statusText = "❌ 系统执行异常";
+      }
+      
+      title.textContent = statusText;
+      summary.textContent = result.evidence_summary || result.summary;
+      
+      if (result.plan_assessment && result.plan_assessment.matches_oracle !== undefined) {
+         if (result.plan_assessment.matches_oracle) {
+            oracle.className = "tag ok";
+            oracle.innerHTML = '<i class="fa-solid fa-check"></i> 行为符合实验预期';
+         } else {
+            oracle.className = "tag bad";
+            oracle.innerHTML = '<i class="fa-solid fa-xmark"></i> 行为偏离实验预期';
+         }
+      }
+      
+      if (result.openclaw_plan && result.openclaw_plan.backend) {
+         planner.textContent = `Planner: ${result.openclaw_plan.backend} / ${result.openclaw_plan.planner_mode || "N/A"}`;
+         planner.className = `tag ${result.planning_failed ? 'bad' : 'neutral'} mono`;
+      }
+      
+      if (result.mode_compare && result.mode_compare.length > 0) {
+         compareNote.style.display = "inline-block";
+      } else {
+         compareNote.style.display = "none";
+      }
+    }
+
     async function refreshStateSnapshot() {
       await refreshDashboard(true);
     }
@@ -851,23 +1183,44 @@
       const result = await fetch(`/api/audit/recent?request_id=${encodeURIComponent(requestId)}`).then(r => r.json());
       const bundle = result.request_trace;
       const timeline = Array.isArray(result.timeline) ? result.timeline : [];
+      const traceTimeline = Array.isArray(result.request_trace_timeline) ? result.request_trace_timeline : [];
       const summary = [
         `Request ID: ${requestId}`,
         `本地日志 ${result.audit.length} 条`,
         `链上存证 ${result.chain.length} 条`,
         `统一时间线 ${timeline.length} 条`,
-        bundle && bundle.summary ? `摘要: ${bundle.summary}` : null
+        `完整链路事件 ${traceTimeline.length} 条`
       ].filter(Boolean).join(" | ");
-      document.getElementById("request-trace-output").innerHTML = `
-        ${escapeHtml(summary)}<br>
-        <pre class="raw-evidence" style="background:#f3f4f6; color:#111;">${escapeHtml(JSON.stringify({
-          request_trace: bundle,
-          audit: result.audit,
-          chain: result.chain,
-          approvals: result.approvals,
-          timeline
-        }, null, 2))}</pre>
-      `;
+      
+      const outputEl = document.getElementById("request-trace-output");
+      if (outputEl) {
+        outputEl.innerHTML = `
+          ${escapeHtml(summary)}<br>
+          <div style="margin-top: 12px; margin-bottom: 8px; display: flex; gap: 8px;">
+            <button class="btn btn-sm btn-primary" onclick="document.getElementById('trace-summary-view').style.display='block'; document.getElementById('trace-raw-view').style.display='none';"><i class="fa-solid fa-file-lines"></i> 摘要证据</button>
+            <button class="btn btn-sm btn-secondary" onclick="document.getElementById('trace-summary-view').style.display='none'; document.getElementById('trace-raw-view').style.display='block';"><i class="fa-solid fa-code"></i> 原始 Trace</button>
+          </div>
+          <div id="trace-summary-view">
+            <div class="evidence-title">执行摘要 (由后端结构化生成)</div>
+            <div class="raw-evidence" style="background:#f8fafc; color:#1f2937; border:1px solid #e5e7eb; font-size: 0.9rem; padding: 16px;">
+              ${escapeHtml(bundle && bundle.evidence_summary ? bundle.evidence_summary : (bundle && bundle.summary ? bundle.summary : "无可用摘要。"))}
+            </div>
+            <div class="evidence-title" style="margin-top:12px;">完整链路日志</div>
+            <div style="margin-top:8px;">${renderTraceTimeline(traceTimeline)}</div>
+          </div>
+          <div id="trace-raw-view" style="display:none;">
+            <div class="evidence-title">原始系统数据 (JSON)</div>
+            <pre class="raw-evidence" style="background:#f3f4f6; color:#111;">${escapeHtml(JSON.stringify({
+              request_trace: bundle,
+              request_trace_timeline: traceTimeline,
+              audit: result.audit,
+              chain: result.chain,
+              approvals: result.approvals,
+              timeline
+            }, null, 2))}</pre>
+          </div>
+        `;
+      }
     }
 
     // --- 运行主演示逻辑 ---
@@ -875,10 +1228,13 @@
       resetPipeline();
       const id = scenarioSelect.value;
       if(!id) return alert("请先选择场景！");
+      activeLiveSessionId = createLiveSessionId();
+      liveRunLines = [];
       emitClientLog("ui_action", "info", "run demo clicked", {
         scenario_id: id,
         mode: modeSelect.value,
-        use_real_openclaw: useRealOpenClaw.checked,
+        planner_mode: plannerMode.value,
+        session_id: activeLiveSessionId,
       });
       
       demoFinalStatus.className = "tag warn";
@@ -890,7 +1246,8 @@
           <span style="color:var(--text-muted);"> | 正在接收实时步骤日志</span>
         </div>
         <div class="evidence-title" style="margin-top:0;">步骤日志</div>
-        <pre class="raw-evidence" id="live-step-log" style="margin-top:8px;">等待 OpenClaw 和网关返回步骤...</pre>
+        <pre class="raw-evidence" id="live-step-log" style="margin-top:8px; max-height:360px; overflow:auto; white-space:pre-wrap;">stream.open
+等待实时事件...</pre>
       `;
       
       // Spinner
@@ -900,7 +1257,8 @@
         const payload = {
           scenario_id: id,
           mode: modeSelect.value,
-          use_real_openclaw: useRealOpenClaw.checked,
+          session_id: activeLiveSessionId,
+          planner_mode: plannerMode.value,
           include_mode_compare: true, // 开启三模式对比证据
           user_task_override: userTaskOverride.value || null
         };
@@ -917,6 +1275,7 @@
         
         renderModeCompare(result);
         renderDefenseSummary(result);
+        renderVerdictBoard(result);
         renderCurrentRunLog(result);
         
         await refreshDashboard(true);
@@ -933,12 +1292,13 @@
       }
     });
 
-    function appendLiveTraceLine(line) {
+    function appendLiveTraceLine(line, eventMeta = null) {
       if (!line) return;
       liveRunLines.push(line);
       const el = document.getElementById("live-step-log");
       if (el) {
         el.textContent = liveRunLines.join("\n");
+        el.scrollTop = el.scrollHeight;
       }
     }
 
@@ -1107,10 +1467,12 @@
         try {
           const payload = JSON.parse(event.data);
           const kind = payload.kind;
-          if (kind === "demo_trace") {
-            appendLiveTraceLine(payload.payload.line);
+          const eventPayload = payload.payload || {};
+          const sameSession = !!activeLiveSessionId && eventPayload.session_id === activeLiveSessionId;
+          if (sameSession && (kind === "planning_trace" || kind === "gateway_trace" || kind === "demo_trace" || kind === "demo_run")) {
+            appendLiveTraceLine(formatLiveEventLine(kind, eventPayload, payload.timestamp), payload);
           }
-          if (kind === "demo_run" || kind === "audit" || kind === "approval" || kind === "frontend_log") {
+          if (kind === "demo_run" || kind === "planning_trace" || kind === "gateway_trace" || kind === "audit" || kind === "approval" || kind === "frontend_log") {
             scheduleRefresh();
           }
         } catch (err) {
@@ -1168,7 +1530,9 @@
             <h4 style="margin:0 0 8px 0; color:var(--text-secondary); text-transform:uppercase;">${escapeHtml(item.mode)}</h4>
             <div style="font-size:2rem; font-weight:bold; color:var(--color-primary);">${escapeHtml(item.interception_rate)}</div>
             <div style="font-size:0.8rem; color:var(--text-muted);">成功拦截率</div>
-            <div style="font-size:0.8rem; margin-top:8px; border-top:1px solid #eee; padding-top:8px;">开销: ${escapeHtml(item.avg_latency_ms)}ms | 误报: ${escapeHtml(item.false_positive_rate)}</div>
+            <div style="font-size:0.8rem; margin-top:8px; border-top:1px solid #eee; padding-top:8px;">
+              开销: ${escapeHtml(item.avg_latency_ms)}ms | 误报: ${escapeHtml(item.false_positive_rate)} | 规划失败: ${escapeHtml(item.planning_failed_rate)} | PlanHash一致性: ${escapeHtml(item.plan_hash_consistency_rate)}
+            </div>
           </div>
         `).join('');
         
@@ -1209,7 +1573,7 @@
         };
         const result = await postJson("/api/demo/state/request", payload);
         const submitResult = await postJson("/api/state/update", result);
-        out.innerHTML = `<pre class="raw-evidence" style="background:#f3f4f6; color:#111;">${escapeHtml(JSON.stringify(submitResult, null, 2))}</pre>`; // 原始 JSON 证据
+        out.innerHTML = `<div style="margin-bottom:8px; color:var(--color-warning);">debug_manual 路径：本次调用使用服务端代签辅助接口，仅用于调试展示。</div><pre class="raw-evidence" style="background:#f3f4f6; color:#111;">${escapeHtml(JSON.stringify(submitResult, null, 2))}</pre>`; // 原始 JSON 证据
         await refreshDashboard(true);
       } catch (err) {
         out.innerHTML = `<i class="fa-solid fa-xmark"></i> 失败: ${escapeHtml(err.message)}`;

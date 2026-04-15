@@ -1,137 +1,128 @@
-# OpenQ Windows 部署说明
+# OpenQ Windows + WSL2 完整部署文档
 
-这份文档面向 Windows 10/11 用户，给出从零开始的完整部署路径。
+本文面向一台运行 `Windows 10/11` 的开发或演示设备，目标部署拓扑固定为：
 
-推荐方案是 `Windows + WSL2 + Ubuntu + Docker Desktop`，然后把项目、Python 运行环境、FISCO BCOS 脚本都放在 `WSL2` 里执行。这样最接近仓库当前的实际运行方式，也最稳定。
+- `Windows` 主机负责运行 `Docker Desktop`
+- `Docker Desktop` 负责承载 `FISCO BCOS` 四节点私有链容器
+- `WSL2 Ubuntu` 负责运行 `OpenClaw`、`FastAPI`、网页演示端、虚拟 App、审计与状态文件
+- 浏览器从 `Windows` 侧访问 `http://localhost:8000`
 
-如果直接在 `PowerShell` 或 `CMD` 里跑这些脚本，通常会遇到路径、权限、证书、`bash` 行为不一致的问题，所以不建议。
+这也是当前仓库最接近实际交付形态、最稳定、最容易复现的一种部署方式。
 
-## 1. 这个项目在 Windows 上怎么跑
+## 1. 部署目标与最终结构
 
-OpenQ 当前主工程由下面几部分组成：
+本项目在这套部署中分为三层：
 
-| 组件 | 运行位置 | 说明 |
+| 组件 | 部署位置 | 作用 |
 | --- | --- | --- |
-| `FastAPI` 主服务 | `WSL2 Ubuntu` | 提供网页演示和全部 `API` |
-| `FISCO BCOS` | `Docker Desktop` | 通过仓库内的运行资产启动 4 节点链 |
-| `OpenClaw` | 推荐装在 `WSL2 Ubuntu` | 通过 `ws://localhost:18789` 连接 |
-| 研究数据和状态文件 | `WSL2 Ubuntu` 的项目目录 | `data/` 下的审计、记忆、基线、样本都在这里 |
+| `Docker Desktop` | Windows 主机 | 提供容器运行时 |
+| `FISCO BCOS` | Docker Desktop 容器 | 提供私有链、权限校验、链上摘要 |
+| `OpenClaw gateway` | WSL2 Ubuntu | 提供真实 OpenClaw WebSocket 接入 |
+| `FastAPI + 网页演示端` | WSL2 Ubuntu | 提供网页前端、API、网关、虚拟 App |
+| `data/`、`logs/`、`runtime-deps/` | WSL2 Ubuntu 项目目录 | 保存状态、审计、链运行资产与日志 |
 
-主服务默认会访问这些端口：
+默认访问入口如下：
 
 | 功能 | 默认地址 |
 | --- | --- |
-| 网页演示 | `http://localhost:8000` |
+| 网页演示端 | `http://localhost:8000` |
 | OpenClaw WebSocket | `ws://localhost:18789` |
-| FISCO 节点 | `20200` 到 `20203` |
-| FISCO RPC / 监听端口 | `30300` 到 `30303` |
+| OpenClaw 状态接口 | `http://localhost:8000/api/openclaw/status` |
+| 链状态接口 | `http://localhost:8000/api/chain/status` |
+| FISCO 端口 | `20200-20203`、`30300-30303` |
 
-## 2. 部署前准备
+## 2. 部署前提
 
-### 2.1 硬件和系统建议
+### 2.1 机器建议
 
-建议准备至少 `16 GB` 内存，`30 GB` 以上可用磁盘空间，`4` 核以上 CPU。
+建议至少满足下面条件：
 
-如果你的机器资源比较紧张，项目也能跑，但 `torch`、`sentence-transformers` 和 `Docker Desktop` 会让启动变慢。
+- `Windows 10/11`
+- `16 GB` 以上内存
+- `4` 核以上 CPU
+- `30 GB` 以上空闲磁盘
 
-### 2.2 推荐工作目录
+如果机器资源偏紧，项目仍可能运行，但 `Docker Desktop`、`OpenClaw` 和本地护栏模型首轮初始化会明显变慢。
 
-请把仓库放在 `WSL2` 的 Linux 文件系统里，例如 `~/project/openq`。
+### 2.2 目录规划
 
-不要放在这些位置：
+仓库必须放在 `WSL2` 的 Linux 文件系统中，例如：
 
-| 位置 | 原因 |
-| --- | --- |
-| `C:\` 挂载盘，比如 `/mnt/c/...` | 文件系统性能和权限表现不稳定 |
-| OneDrive 同步目录 | 容易被同步程序占用 |
-| 桌面临时目录 | 后续维护和脚本执行都不方便 |
+```bash
+~/project/openq
+```
 
-### 2.3 环境变量
+不建议放在这些位置：
 
-项目默认会读取下面几个环境变量：
+- `/mnt/c/...`
+- OneDrive 同步目录
+- Windows 桌面映射目录
 
-| 变量 | 推荐值 | 作用 |
-| --- | --- | --- |
-| `OPENQ_GUARD_ALLOW_REMOTE_DOWNLOAD` | `0` | 是否允许首次在线下载意图护栏模型 |
-| `OPENQ_GUARD_DEVICE` | `cpu` | 护栏模型运行设备，默认最稳妥 |
-| `OPENQ_GUARD_RUNTIME` | `formal` | 使用正式模型后端，找不到模型时会自动回退 |
+原因很简单：跨文件系统路径在权限、性能、软链接和脚本行为上都更容易出问题。
 
-如果你第一次启动时没有模型缓存，可以临时把 `OPENQ_GUARD_ALLOW_REMOTE_DOWNLOAD` 改成 `1`。  
-如果你保持 `0`，系统也能运行，只是会自动回退到仓库内的 hashing fallback。
+### 2.3 本文默认约定
 
-## 3. 从零开始安装
+后续命令按下面约定描述：
 
-### 第一步，开启 WSL2
+- `Windows PowerShell` 命令在 `Windows` 终端执行
+- `Ubuntu` 命令在 `WSL2 Ubuntu` 终端执行
+- 项目根目录默认为 `~/project/openq`
 
-在 Windows 上打开 `PowerShell` 管理员窗口，执行：
+## 3. 第一次安装环境
+
+### 3.1 在 Windows 上启用 WSL2
+
+以管理员身份打开 `PowerShell`，执行：
 
 ```powershell
 wsl --install
 wsl --set-default-version 2
 ```
 
-执行完以后重启电脑。
+执行完成后重启 Windows。
 
-如果你已经装过 `WSL`，只需要确认当前发行版是 `WSL2`。
+如果机器上已经安装过 `WSL`，可以继续确认当前发行版是否已是 `WSL2`：
 
-### 第二步，安装 Ubuntu
+```powershell
+wsl -l -v
+```
 
-可以通过 Microsoft Store 安装 `Ubuntu`，也可以直接在 `PowerShell` 里执行：
+### 3.2 安装 Ubuntu
+
+可从 Microsoft Store 安装 `Ubuntu`，也可以直接执行：
 
 ```powershell
 wsl --install -d Ubuntu
 ```
 
-安装完成后，打开 Ubuntu，创建 Linux 用户名和密码。
+首次启动 Ubuntu 时，系统会要求创建 Linux 用户名和密码。
 
-### 第三步，安装基础工具
+### 3.3 在 Windows 上安装 Docker Desktop
 
-在 `Ubuntu` 里执行：
+在 Windows 主机安装 `Docker Desktop`，安装后至少确认这些设置：
+
+1. 启用 `Use the WSL 2 based engine`
+2. 在 `Settings -> Resources -> WSL Integration` 中勾选你的 Ubuntu 发行版
+3. 给 Docker 分配足够内存，建议不少于 `6 GB`
+4. 启动后确认 Docker Desktop 状态为 Running
+
+安装完成后，在 `Windows` 侧无需手工部署链容器，后续由项目脚本在 `WSL2` 内通过 Docker CLI 驱动 Docker Desktop。
+
+### 3.4 在 WSL2 Ubuntu 中安装基础工具
+
+进入 Ubuntu，执行：
 
 ```bash
 sudo apt update
 sudo apt upgrade -y
-sudo apt install -y git curl unzip ca-certificates build-essential
+sudo apt install -y git curl unzip ca-certificates build-essential lsof
 ```
 
-这一步的作用是准备后续拉仓库、安装 `uv` 和运行脚本所需的基础工具。
+如果后续需要排查端口、进程和网络，`lsof` 会比较有用。
 
-### 第四步，安装 Docker Desktop
+### 3.5 在 WSL2 Ubuntu 中安装 uv
 
-在 Windows 主机上安装 `Docker Desktop`，安装后完成这几项设置：
-
-1. 启用 `Use the WSL 2 based engine`
-2. 打开 `Resources` 里的 `WSL Integration`
-3. 勾选你正在使用的 `Ubuntu` 发行版
-4. 给 `Docker Desktop` 分配足够内存，建议至少 `6 GB`
-
-安装完后先启动一次 `Docker Desktop`，确认右下角状态正常。
-
-仓库里的 `FISCO BCOS` 依赖 Docker，所以这一步必须先完成。
-
-### 第五步，安装 OpenClaw
-
-OpenClaw 的具体安装方式以官方文档为准，因为它的安装包和版本会随官方发布更新。
-
-官方入口如下：
-
-`https://docs.openclaw.ai/install`
-
-`https://docs.openclaw.ai/start/setup`
-
-安装完成后，在你准备用来跑项目的环境里确认：
-
-```bash
-openclaw --version
-openclaw health
-```
-
-当前项目代码默认连接的是 `ws://localhost:18789`。  
-如果你的 OpenClaw 监听端口不是这个值，要么把 OpenClaw 改到这个端口，要么修改 `app/core/settings.py` 里的 `real_openclaw_url`。
-
-### 第六步，安装 `uv`
-
-在 `Ubuntu` 里安装 `uv`：
+项目当前使用 `uv` 作为 Python 环境和运行入口。执行：
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -139,21 +130,63 @@ source ~/.local/bin/env
 uv --version
 ```
 
-`uv` 是这个项目推荐的 Python 入口，后面所有依赖安装和运行都通过它完成。
+建议把 `~/.local/bin` 放入 shell 的 `PATH`。如果安装脚本没有自动处理，可把下面内容加入 `~/.bashrc`：
 
-### 第七步，准备 Python 3.12
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
 
-项目要求 `Python 3.12`。推荐直接让 `uv` 管理 Python：
+然后执行：
+
+```bash
+source ~/.bashrc
+```
+
+### 3.6 在 WSL2 Ubuntu 中准备 Python 3.12
+
+执行：
 
 ```bash
 uv python install 3.12
 ```
 
-如果这一步成功，后面 `uv sync` 会自动使用对应版本。
+这个项目的 Python 入口和依赖安装都按 `Python 3.12` 组织。
 
-## 4. 获取项目代码
+### 3.7 在 WSL2 Ubuntu 中安装 OpenClaw
 
-把仓库放到 `WSL2` 的 Linux 文件系统里，例如：
+OpenClaw 不打包在仓库内，需要单独安装。优先参考官方文档：
+
+- https://docs.openclaw.ai/install
+- https://docs.openclaw.ai/start/setup
+
+仓库中还缓存了一份 npm 包归档，可用于减少联网拉包次数：
+
+- `runtime-deps/packages/openclaw-2026.4.5.tgz`
+
+安装完成后，先在 Ubuntu 终端确认：
+
+```bash
+openclaw --version
+openclaw health
+```
+
+当前项目默认连接地址是：
+
+```text
+ws://localhost:18789
+```
+
+如果你把 OpenClaw 配到了别的端口或地址，不需要改源码，直接设置环境变量：
+
+```bash
+export OPENCLAW_URL="ws://127.0.0.1:18789"
+```
+
+## 4. 获取项目与安装依赖
+
+### 4.1 拉取项目代码
+
+在 Ubuntu 里执行：
 
 ```bash
 mkdir -p ~/project
@@ -162,11 +195,9 @@ git clone <你的仓库地址> openq
 cd openq
 ```
 
-如果仓库已经复制到本机，也可以直接进入项目目录，只要它最终位于 `WSL2` 的 Linux 文件系统中即可。
+如果项目已经存在，只要确认最终路径位于 `WSL2` 本地 Linux 文件系统即可。
 
-建议你现在确认一下当前目录确实是项目根目录，并且能看到 `app/`、`data/`、`scripts/`、`runtime-deps/` 这些目录。
-
-## 5. 安装项目依赖
+### 4.2 安装 Python 依赖
 
 在项目根目录执行：
 
@@ -174,263 +205,384 @@ cd openq
 uv sync
 ```
 
-这一步会根据 `pyproject.toml` 和 `uv.lock` 创建虚拟环境并安装依赖。
+这一步会创建虚拟环境并安装 `pyproject.toml` 与 `uv.lock` 中定义的依赖。
 
-完成后可以快速确认 Python 入口正常：
+安装完成后先确认基础入口：
 
 ```bash
 uv run python -V
 uv run python -m unittest discover -s tests -v
 ```
 
-如果你不想让护栏模块首次联网下载模型，就继续保持前面设置的：
+如果单元测试跑通，说明主工程依赖基本完整。
+
+## 5. 护栏模型与环境变量
+
+仓库已经内置了护栏模型权重，路径分别是：
+
+- `runtime-deps/models/BAAI/bge-base-zh-v1.5`
+- `runtime-deps/models/BAAI/bge-reranker-v2-m3`
+
+因此正常部署时不需要再额外下载这两套权重，系统会优先使用仓库内本地文件。
+
+项目默认会读取这几个环境变量：
+
+| 变量 | 推荐值 | 说明 |
+| --- | --- | --- |
+| `OPENQ_GUARD_ALLOW_REMOTE_DOWNLOAD` | `0` | 是否允许回退到远程补充下载；默认不需要 |
+| `OPENQ_GUARD_DEVICE` | `cpu` | 护栏运行设备 |
+| `OPENQ_GUARD_RUNTIME` | `formal` | 护栏运行模式 |
+| `OPENQ_HOST` | `0.0.0.0` | FastAPI 监听地址 |
+| `OPENQ_PORT` | `8000` | FastAPI 监听端口 |
+| `OPENQ_URL_HOST` | `127.0.0.1` | 脚本健康检查所用访问地址 |
+| `OPENCLAW_PORT` | `18789` | OpenClaw gateway 端口 |
+| `OPENCLAW_URL` | `ws://127.0.0.1:18789` | OpenQ 连接 OpenClaw 的完整地址 |
+| `OPENQ_MODEL_ROOT` | `$(pwd)/runtime-deps/models` | 本地护栏模型根目录 |
+
+推荐在 `~/.bashrc` 或当前部署会话中先设置：
 
 ```bash
 export OPENQ_GUARD_ALLOW_REMOTE_DOWNLOAD=0
 export OPENQ_GUARD_DEVICE=cpu
 export OPENQ_GUARD_RUNTIME=formal
+export OPENQ_MODEL_ROOT="$PWD/runtime-deps/models"
 ```
 
-如果你希望首次启动就下载正式模型，可以临时执行：
+保持 `0` 时会直接使用仓库内本地权重，不会再去联网下载模型。
+
+## 6. 启动链服务
+
+### 6.1 确认 Docker Desktop 已启动
+
+在 Windows 侧先打开 `Docker Desktop`，确保状态正常。
+
+然后回到 Ubuntu，执行：
 
 ```bash
-export OPENQ_GUARD_ALLOW_REMOTE_DOWNLOAD=1
+docker info
 ```
 
-## 6. 启动 FISCO BCOS
+如果这条命令失败，优先检查：
 
-先确认 `Docker Desktop` 已经启动。
+- Docker Desktop 是否真的已经启动
+- Docker Desktop 的 WSL Integration 是否勾选了当前 Ubuntu
+- 当前终端是否需要重开一次
 
-然后在项目根目录执行：
+### 6.2 启动 FISCO BCOS
+
+在项目根目录执行：
 
 ```bash
 ./scripts/fisco-up.sh
 ```
 
-这个脚本会自动做几件事：
+脚本会自动完成这些动作：
 
-1. 检查仓库内的链运行目录是否存在
-2. 检查 Docker 是否可用
-3. 如果本地没有 `fiscoorg/fiscobcos:v3.6.0` 镜像，就从仓库里的 `runtime-deps/images/fiscobcos-v3.6.0-image.tar` 导入
-4. 创建专用 Docker 网络 `openq-fisco`
-5. 启动仓库内的 4 个节点
+1. 检查 Docker 是否可用
+2. 创建 `openq-fisco` Docker 网络
+3. 检查本地是否已有 `fiscoorg/fiscobcos:v3.6.0`
+4. 若镜像不存在，则从仓库中的镜像归档导入
+5. 使用 `runtime-deps/fisco-portable` 里的节点配置启动四节点链
 
-启动后执行：
+### 6.3 检查链状态
+
+执行：
 
 ```bash
 ./scripts/fisco-status.sh
 ```
 
-正常情况下，你会看到运行中的 FISCO 容器、SDK 证书目录和关键端口监听信息。
+正常情况下，你应该看到：
 
-如果你想进入链控制台，可以执行：
+- 4 个 FISCO 容器处于 `Up`
+- SDK 证书目录输出为 `runtime-deps/fisco-portable/nodes/127.0.0.1/sdk`
+- `20200-20203` 与 `30300-30303` 端口已监听
+
+### 6.4 使用和停止链
+
+进入控制台：
 
 ```bash
 ./scripts/fisco-console.sh
 ```
 
-这个脚本会优先使用仓库自带的 `JDK 11`，路径是 `runtime-deps/jdks/temurin-11`，所以通常不需要你再额外安装 Java。
-
-停止链服务的命令是：
+停止链：
 
 ```bash
 ./scripts/fisco-down.sh
 ```
 
-### FISCO 启动失败时先看什么
-
-| 现象 | 先检查什么 |
-| --- | --- |
-| `docker` 不可用 | `Docker Desktop` 是否已启动，WSL 集成是否打开 |
-| 端口被占用 | `20200` 到 `20203`，以及 `30300` 到 `30303` 是否已有别的链或容器占用 |
-| `console_connect_failed` | `Docker Desktop` 是否正常，链是否真的启动成功 |
-| `chain unavailable` | `fisco-up.sh` 是否执行成功，`fisco-status.sh` 是否能看到节点 |
-
 ## 7. 检查 OpenClaw
 
-在 `WSL2` 里执行：
+在 Ubuntu 终端执行：
 
 ```bash
-openclaw --version
-openclaw health
+./scripts/openclaw-check.sh
 ```
 
-如果命令不存在，说明 OpenClaw 还没有装好，或者没有加入当前终端的 `PATH`。
+这个脚本会检查两件事：
 
-项目的 OpenClaw 连接地址默认是 `ws://localhost:18789`。  
-如果你的 OpenClaw 运行在 Windows 主机上，一般也可以通过 `localhost` 访问，但前提是 Windows 到 `WSL2` 的本地回环转发正常。
+1. `openclaw` 命令是否存在
+2. `openclaw health` 是否可通过
 
-如果这里连不上，优先检查这三点：
-
-1. OpenClaw 是否真的启动
-2. 18789 端口是否被其他程序占用
-3. 你的 OpenClaw 是否和项目运行在同一个网络可见范围内
+如果 `openclaw health` 失败，不要继续启动 OpenQ 主服务，先把 OpenClaw 自身状态修好。
 
 ## 8. 启动 OpenQ 主服务
+
+你有两种启动方式。
+
+### 8.1 推荐方式：一键启动整套环境
 
 在项目根目录执行：
 
 ```bash
-export OPENQ_GUARD_ALLOW_REMOTE_DOWNLOAD=0
-export OPENQ_GUARD_DEVICE=cpu
-export OPENQ_GUARD_RUNTIME=formal
+./scripts/openq-up.sh
+```
 
+这个脚本会按固定顺序启动：
+
+1. 检查或启动 FISCO BCOS
+2. 检查或启动 OpenClaw gateway
+3. 启动 `FastAPI` 演示端
+4. 输出演示页地址、OpenClaw 状态地址、链状态地址
+
+这个脚本采用后台启动模式。脚本退出后，服务仍会继续运行。
+
+### 8.2 手工方式：单独启动 FastAPI
+
+如果你需要前台调试 `uvicorn`，可使用：
+
+```bash
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-启动成功后，在 Windows 浏览器里访问：
+这种方式适合开发调试，不适合正式演示时一键拉起整套环境。
 
-`http://localhost:8000`
+## 9. 从 Windows 侧访问网页前端
 
-如果页面打不开，先确认下面两件事：
+项目的网页前端不是部署在 Windows 主机上，而是运行在 `WSL2 Ubuntu` 里的 `FastAPI` 服务中。
 
-1. `uvicorn` 进程是否还在运行
-2. Windows 的 `localhost` 是否能转发到 `WSL2`
+只要 `uvicorn` 绑定的是 `0.0.0.0:8000`，Windows 浏览器通常可以直接访问：
 
-如果你更习惯固定命令，也可以直接使用仓库根目录 `README.md` 里的启动方式，只要确保在 `WSL2` 里执行即可。
-
-如果你想直接一键启动整套本地演示环境，也可以在 `WSL2` 终端里执行：
-
-```bash
-./scripts/openq-up.sh
-./scripts/openq-down.sh
+```text
+http://localhost:8000
 ```
 
-这个命令会自动处理 FISCO BCOS、OpenClaw gateway 和 `FastAPI` 演示端，脚本确认服务可用后会直接退出，适合答辩现场快速拉起环境。
-如果要关停整套环境，执行 `./scripts/openq-down.sh` 即可。
+因为 WSL2 默认会把 Linux 侧的监听端口映射到 Windows 的 `localhost`。
 
-## 9. 部署后的验证顺序
+如果 `localhost:8000` 无法访问，可以在 Ubuntu 中执行：
 
-建议按下面顺序确认：
+```bash
+hostname -I
+```
+
+假设输出为 `172.24.116.85`，那也可以尝试从 Windows 浏览器访问：
+
+```text
+http://172.24.116.85:8000
+```
+
+但在正常情况下，优先还是使用 `http://localhost:8000`。
+
+## 10. 部署完成后的验证顺序
+
+建议按下面顺序验证：
+
+### 10.1 预检
 
 ```bash
 ./scripts/preflight.sh
 ```
 
-这个脚本会一次性检查：
+这个脚本会检查：
 
-1. 护栏模型状态
-2. FISCO 运行状态
-3. OpenClaw 命令可用性
-4. FastAPI 应用装载是否正常
+- Python 与护栏模型状态
+- FISCO 状态
+- OpenClaw 状态
+- FastAPI 应用是否可装载
 
-如果你想做完整验收，再执行：
+### 10.2 验证网页是否可访问
+
+在 Windows 浏览器访问：
+
+```text
+http://localhost:8000
+```
+
+如果页面能打开，说明前端网页已经正确运行在 WSL2 中。
+
+### 10.3 验证两个核心状态接口
+
+在 Ubuntu 中执行：
+
+```bash
+curl -fsS http://127.0.0.1:8000/api/chain/status
+curl -fsS http://127.0.0.1:8000/api/openclaw/status
+```
+
+正常情况下，应该看到：
+
+- `/api/chain/status` 返回 `available: true`
+- `/api/openclaw/status` 返回 `available: true`
+
+### 10.4 运行项目验收脚本
 
 ```bash
 ./scripts/acceptance.sh
 ```
 
-这个脚本会继续跑语法检查、单元测试和核心场景验证。
+这个脚本会跑一轮项目级验收，适合在部署完成后做最终确认。
 
-如果你只是想确认项目可以交付运行，最少要看这三个结果：
+## 11. 日常启动与停止
 
-| 检查项 | 期望结果 |
-| --- | --- |
-| `./scripts/fisco-status.sh` | 能看到节点和端口监听 |
-| `openclaw health` | OpenClaw 返回健康状态 |
-| `http://localhost:8000` | 页面能打开并显示演示界面 |
+### 11.1 每次开机后的推荐顺序
 
-## 10. 浏览器里的日常使用
+1. 在 Windows 启动 `Docker Desktop`
+2. 打开 `WSL2 Ubuntu`
+3. 进入项目目录 `cd ~/project/openq`
+4. 执行 `./scripts/openq-up.sh`
+5. 在 Windows 浏览器打开 `http://localhost:8000`
 
-打开主页后，你可以直接看到演示面板。常用操作顺序是：
-
-1. 选择 `off`、`guard_only` 或 `full`
-2. 选择一个场景
-3. 点击运行
-4. 观察请求链路、拦截层级、审计记录和链状态
-
-当前项目的三种模式定义是固定的：
-
-| 模式 | 含义 |
-| --- | --- |
-| `off` | 关闭双层防御，只保留最基础的执行和记录 |
-| `guard_only` | 只启用第一层意图护栏 |
-| `full` | 第一层护栏加第二层 FISCO BCOS 验签验权 |
-
-## 11. 常见问题
-
-### 11.1 `openclaw` 命令找不到
-
-说明 OpenClaw 没有装好，或者终端没有读到它的安装路径。
-
-先在 `WSL2` 里执行：
+### 11.2 关闭整套服务
 
 ```bash
-openclaw --version
+./scripts/openq-down.sh
 ```
 
-如果还是找不到，就按官方文档重新安装，安装完成后重新打开一个终端窗口再试。
+这个脚本会依次停止：
 
-### 11.2 `fisco-up.sh` 报端口占用
+- FastAPI 演示端
+- OpenClaw gateway
+- FISCO BCOS
 
-说明本机上已经有别的链服务、Docker 容器，或者旧实例还没停干净。
+## 12. 日志与常用排查位置
+
+运行日志统一写在：
+
+- `logs/openq-up.log`
+- `logs/fisco-up.log`
+- `logs/openq-app.log`
+- `logs/openclaw.log`
+- `logs/openq-down.log`
+
+如果启动失败，优先看对应日志文件，不要先改代码。
+
+## 13. 常见故障与处理办法
+
+### 13.1 `docker info` 失败
+
+常见原因：
+
+- Docker Desktop 未启动
+- Docker Desktop 没有启用当前 Ubuntu 的 WSL 集成
+- 终端启动早于 Docker Desktop 完全就绪
+
+处理方式：
+
+1. 确认 Windows 侧 Docker Desktop 已 Running
+2. 重开一个 Ubuntu 终端
+3. 再次执行 `docker info`
+
+### 13.2 `./scripts/fisco-up.sh` 提示端口占用
+
+常见占用端口：
+
+- `20200-20203`
+- `30300-30303`
+
+处理方式：
+
+```bash
+./scripts/fisco-down.sh
+docker ps
+ss -ltn | grep -E ':2020[0-3]|:3030[0-3]'
+```
+
+如果仍被其他程序占用，先释放端口后再启动。
+
+### 13.3 `openclaw` 命令不存在
+
+说明 OpenClaw 没安装好，或者没有加入当前 shell 的 `PATH`。
 
 先执行：
 
 ```bash
-./scripts/fisco-down.sh
+which openclaw
+openclaw --version
 ```
 
-然后再看 `docker ps`，确认 `20200` 到 `20203`、`30300` 到 `30303` 都已经释放。
+如果找不到命令，就回到 OpenClaw 安装步骤修复。
 
-### 11.3 页面能开，但 `FISCO` 显示不可用
+### 13.4 `openclaw health` 失败
 
-通常是 Docker、链节点、控制台任意一个环节没有起来。
+说明 OpenClaw 本身未就绪，不是 OpenQ 主工程的问题。
 
-按这个顺序排查：
-
-1. `Docker Desktop` 是否运行
-2. `./scripts/fisco-status.sh` 是否能看到容器
-3. `./scripts/fisco-console.sh` 是否能连上控制台
-
-### 11.4 护栏模型没有下载
-
-这不一定是错误。
-
-如果你把 `OPENQ_GUARD_ALLOW_REMOTE_DOWNLOAD` 设成了 `0`，项目会优先使用离线 fallback，所以系统仍然可以启动。
-
-如果你希望正式模型参与判断，就把这个变量临时设成 `1`，再重新启动服务。
-
-### 11.5 `localhost:8000` 打不开
-
-先检查 `uvicorn` 是否在跑。  
-再检查 `WSL2` 的本地回环是否正常。  
-如果你同时开了多个网络代理、VPN 或安全软件，也可能影响回环访问。
-
-### 11.6 仓库放在 `C:\` 下后脚本很慢
-
-这是 `WSL2` 下最常见的问题之一。  
-建议直接把仓库迁移到 `~/project/openq` 这种 Linux 路径下，然后重新跑 `uv sync` 和 `./scripts/fisco-up.sh`。
-
-## 12. 停止和重启
-
-关闭主服务时，先在运行 `uvicorn` 的终端按 `Ctrl+C`。
-
-然后如果你要停链，再执行：
+先单独把 OpenClaw 服务拉起来，再重新执行：
 
 ```bash
-./scripts/fisco-down.sh
+./scripts/openclaw-check.sh
 ```
 
-如果你连 OpenClaw 也要一起关掉，就按它自己的官方方式停止。
+### 13.5 Windows 浏览器打不开 `http://localhost:8000`
 
-下次重启时，顺序仍然建议是：
+先在 Ubuntu 中检查：
 
-1. 启动 `Docker Desktop`
-2. 启动 `FISCO BCOS`
-3. 确认 `OpenClaw`
-4. 启动 `uvicorn`
+```bash
+curl -I http://127.0.0.1:8000
+ss -ltnp | grep ':8000'
+```
 
-这样最稳。
+如果 Ubuntu 内部能访问，但 Windows 不行，优先检查：
 
-## 13. 这套 Windows 部署的结论
+- `uvicorn` 是否绑定到 `0.0.0.0`
+- WSL2 端口转发是否正常
+- Windows 防火墙是否拦截
 
-如果你按上面的 `WSL2` 路径部署，这个项目在 Windows 上是可以完整运行的。
+### 13.6 一键脚本退出，但页面还是打不开
 
-最关键的不是 Windows 本身，而是这三件事：
+优先查看：
 
-1. 项目脚本在 `WSL2 Ubuntu` 里执行
-2. `Docker Desktop` 正常提供链服务
-3. `OpenClaw` 能通过 `ws://localhost:18789` 连上
+- `logs/openq-up.log`
+- `logs/openq-app.log`
+- `logs/openclaw.log`
 
-这三件事都通了，OpenQ 的网页演示、链状态、受保护状态更新、实验脚本和验收脚本就都能跑起来。
+一般能直接看出是：
+
+- Docker 没起来
+- OpenClaw health 失败
+- FastAPI 启动异常
+
+## 14. 交付建议
+
+如果这台 Windows 设备是答辩或演示专用机，建议提前完成下面动作：
+
+1. 在 WSL2 中完整跑通一次 `./scripts/openq-up.sh`
+2. 在 Windows 浏览器中确认网页可打开
+3. 用 `./scripts/preflight.sh` 和 `./scripts/acceptance.sh` 做一次部署后自检
+4. 保留 `logs/` 目录，便于现场排查
+5. 演示前先启动 Docker Desktop，再进入 WSL2 启动项目
+
+## 依据来源
+
+### 本地文档
+
+- `README.md`
+- `docs/部署与迁移说明.md`
+- `docs/Windows部署说明.md`
+
+### 仓库脚本与配置
+
+- `scripts/openq-up.sh`
+- `scripts/openq-down.sh`
+- `scripts/fisco-up.sh`
+- `scripts/fisco-status.sh`
+- `scripts/openclaw-check.sh`
+- `scripts/preflight.sh`
+- `scripts/acceptance.sh`
+- `app/core/settings.py`
+
+### 运行资产
+
+- `runtime-deps/fisco-portable`
+- `runtime-deps/images/fiscobcos-v3.6.0-image.tar`
+- `runtime-deps/packages/openclaw-2026.4.5.tgz`

@@ -1,4 +1,5 @@
 import subprocess
+import time
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -7,9 +8,9 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.chain.fisco import ChainAuthorization
-from app.core.actions import state_action_for_target
+from app.core.actions import build_structured_state_args, state_action_for_target
 from app.core.openclaw import OpenClawPlanningError
-from app.main import create_app
+from app.main import build_container, create_app
 from app.schemas import CallContext, Mode, OpenClawToolCall, ResourceType
 
 
@@ -20,6 +21,7 @@ class OpenQFlowTests(unittest.TestCase):
         subprocess.run(["./scripts/fisco-up.sh"], cwd=root, check=False)
 
     def setUp(self) -> None:
+        build_container.cache_clear()
         self.app = create_app()
         self.client = TestClient(self.app)
         self.app.state.container.orchestrator._reset_state()
@@ -33,6 +35,7 @@ class OpenQFlowTests(unittest.TestCase):
         approval_token: str | None = None,
         request_id: str = "manual-state-test",
     ):
+        current_content = self.app.state.container.state_store.read(target)
         call = self.app.state.container.builder.build(
             session_id="manual-state",
             mode=mode,
@@ -40,7 +43,7 @@ class OpenQFlowTests(unittest.TestCase):
                 resource_type=ResourceType.STATE,
                 app="state",
                 action=state_action_for_target(target),
-                args={"target": target, "content": content},
+                args=build_structured_state_args(target, current_content, content),
             ),
             context=CallContext(
                 user_goal="手动更新受保护状态",
@@ -54,6 +57,17 @@ class OpenQFlowTests(unittest.TestCase):
         if approval_token:
             call.metadata["approval_token"] = approval_token
         return call
+
+    def wait_for_approval_status(self, token: str, status: str, timeout: float = 2.0) -> None:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            approval = self.app.state.container.approvals.get(token)
+            if approval is not None and approval.status == status:
+                return
+            time.sleep(0.05)
+        approval = self.app.state.container.approvals.get(token)
+        self.assertIsNotNone(approval)
+        self.assertEqual(approval.status, status)
 
     @contextmanager
     def allow_chain_authorization(self):
@@ -75,13 +89,15 @@ class OpenQFlowTests(unittest.TestCase):
     def test_benign_mail_summary_runs_in_full_mode(self) -> None:
         response = self.client.post(
             "/api/demo/run",
-            json={"scenario_id": "normal_mail_summary", "mode": "full", "use_real_openclaw": False},
+            json={"scenario_id": "normal_mail_summary", "mode": "full", "planner_mode": "demo_safe"},
         )
         payload = response.json()
         self.assertEqual(payload["final_status"], "executed")
         self.assertIsNone(payload["blocked_layer"])
         self.assertEqual(payload["openclaw_plan"]["backend"], "demo_debug_planner")
-        self.assertFalse(payload["openclaw_plan"]["degraded"])
+        self.assertEqual(payload["openclaw_plan"]["planner_mode"], "demo_safe")
+        self.assertEqual(payload["openclaw_plan"]["planning_source"], "debug_plan")
+        self.assertTrue(payload["openclaw_plan"]["degraded"])
         self.assertTrue(payload["plan_assessment"]["matches_oracle"])
         self.assertEqual(payload["plan_assessment"]["planned_actions"], ["mail.read_message"])
         guard = payload["traces"][-1]["response"]["guard"]
@@ -101,18 +117,24 @@ class OpenQFlowTests(unittest.TestCase):
     def test_openclaw_normalizes_action_key_leak_from_model_output(self) -> None:
         response_text = (
             '{"assistant_reply":"ok","calls":[{"tool_name":"call_app_api","resource_type":"state",'
-            '"app":"state","action":"state.update_prompt","args":{"target":"prompt/shared.txt","content":"safe"},'
+            '"app":"state","action":"state.update_prompt","args":{"target":"prompt/shared.txt","patch":{"insert_line":1,"text":"safe\\n"}},'
             '"metadata":{}}]}'
         )
-        plan = self.app.state.container.orchestrator.openclaw._parse_plan(response_text)
+        plan = self.app.state.container.orchestrator.openclaw._parse_plan(
+            response_text,
+            planner_mode="real_strict",
+            planning_session_id="unit-parse",
+            planning_prompt="unit prompt",
+        )
         self.assertEqual(plan.calls[0].app, "state")
         self.assertEqual(plan.calls[0].action, "update_prompt")
         self.assertEqual(plan.calls[0].resource_type.value, "state")
+        self.assertEqual(plan.planning_prompt, "unit prompt")
 
     def test_prompt_injection_blocked_by_guard(self) -> None:
         response = self.client.post(
             "/api/demo/run",
-            json={"scenario_id": "prompt_injection_transfer", "mode": "guard_only", "use_real_openclaw": False},
+            json={"scenario_id": "prompt_injection_transfer", "mode": "guard_only", "planner_mode": "demo_safe"},
         )
         payload = response.json()
         self.assertEqual(payload["final_status"], "blocked")
@@ -123,7 +145,7 @@ class OpenQFlowTests(unittest.TestCase):
     def test_cross_app_attack_blocked_by_chain_in_full_mode(self) -> None:
         response = self.client.post(
             "/api/demo/run",
-            json={"scenario_id": "cross_app_privacy_leak", "mode": "full", "use_real_openclaw": False},
+            json={"scenario_id": "cross_app_privacy_leak", "mode": "full", "planner_mode": "demo_safe"},
         )
         payload = response.json()
         self.assertEqual(payload["final_status"], "blocked")
@@ -133,7 +155,7 @@ class OpenQFlowTests(unittest.TestCase):
         with self.allow_chain_authorization():
             response = self.client.post(
                 "/api/demo/run",
-                json={"scenario_id": "memory_poisoning", "mode": "full", "use_real_openclaw": False},
+                json={"scenario_id": "memory_poisoning", "mode": "full", "planner_mode": "demo_safe"},
             )
         payload = response.json()
         self.assertEqual(payload["final_status"], "blocked")
@@ -143,7 +165,7 @@ class OpenQFlowTests(unittest.TestCase):
         with self.allow_chain_authorization():
             response = self.client.post(
                 "/api/demo/run",
-                json={"scenario_id": "prompt_shared_poisoning", "mode": "full", "use_real_openclaw": False},
+                json={"scenario_id": "prompt_shared_poisoning", "mode": "full", "planner_mode": "demo_safe"},
             )
         payload = response.json()
         self.assertEqual(payload["final_status"], "blocked")
@@ -153,7 +175,7 @@ class OpenQFlowTests(unittest.TestCase):
         with self.allow_chain_authorization():
             response = self.client.post(
                 "/api/demo/run",
-                json={"scenario_id": "safe_prompt_update", "mode": "full", "use_real_openclaw": False},
+                json={"scenario_id": "safe_prompt_update", "mode": "full", "planner_mode": "demo_safe"},
             )
         payload = response.json()
         self.assertEqual(payload["final_status"], "executed")
@@ -185,8 +207,7 @@ class OpenQFlowTests(unittest.TestCase):
             first_response = self.client.post("/api/state/update", json=initial_call.model_dump(mode="json"))
         first_payload = first_response.json()
         token = first_payload["state_change"]["approval_token"]
-        pending = self.client.get("/api/approvals/pending").json()
-        self.assertTrue(any(item["token"] == token for item in pending["items"]))
+        self.wait_for_approval_status(token, "pending")
 
         with self.allow_chain_authorization():
             decision = self.client.post(
@@ -194,6 +215,7 @@ class OpenQFlowTests(unittest.TestCase):
                 json={"token": token, "decision": "approve", "note": "unit test approval"},
             ).json()
         self.assertEqual(decision["approval"]["status"], "approved")
+        self.wait_for_approval_status(token, "approved")
 
         approved_call = self.build_state_request(
             target="memory/main.md",
@@ -223,6 +245,7 @@ class OpenQFlowTests(unittest.TestCase):
                 json={"token": token, "decision": "reject", "note": "unit test reject"},
             ).json()
         self.assertEqual(decision["approval"]["status"], "rejected")
+        self.wait_for_approval_status(token, "rejected")
 
         replay_call = self.build_state_request(
             target="memory/main.md",
@@ -317,7 +340,7 @@ class OpenQFlowTests(unittest.TestCase):
         ):
             response = self.client.post(
                 "/api/demo/run",
-                json={"scenario_id": "normal_mail_summary", "mode": "full", "use_real_openclaw": False},
+                json={"scenario_id": "normal_mail_summary", "mode": "full", "planner_mode": "demo_safe"},
             )
         payload = response.json()
         self.assertEqual(payload["final_status"], "executed")
@@ -331,7 +354,7 @@ class OpenQFlowTests(unittest.TestCase):
                 "scenario_id": "normal_mail_summary",
                 "mode": "full",
                 "include_mode_compare": True,
-                "use_real_openclaw": False,
+                "planner_mode": "demo_safe",
             },
         )
         payload = response.json()
@@ -341,12 +364,16 @@ class OpenQFlowTests(unittest.TestCase):
         self.assertTrue(all(item["request_id"] == request_id for item in audit_payload["chain"]))
         self.assertEqual(audit_payload["request_trace"]["request_id"], request_id)
         self.assertTrue(audit_payload["request_trace"]["assistant_reply"])
+        self.assertTrue(audit_payload["request_trace"]["planning_prompt"])
         self.assertTrue(audit_payload["request_trace"]["traces"])
+        self.assertTrue(audit_payload["request_trace_timeline"])
+        self.assertEqual(audit_payload["request_trace_timeline"][0]["stage"], "planning_input")
+        self.assertTrue(any(item["stage"] == "tool_request" for item in audit_payload["request_trace_timeline"]))
 
     def test_dashboard_snapshot_returns_unified_logs(self) -> None:
         self.client.post(
             "/api/demo/run",
-            json={"scenario_id": "normal_mail_summary", "mode": "full", "use_real_openclaw": False},
+            json={"scenario_id": "normal_mail_summary", "mode": "full", "planner_mode": "demo_safe"},
         )
         dashboard = self.client.get("/api/dashboard").json()
         self.assertIn("openclaw_status", dashboard)
@@ -356,6 +383,24 @@ class OpenQFlowTests(unittest.TestCase):
         self.assertIn("logs", dashboard)
         self.assertTrue(dashboard["logs"])
         self.assertTrue({item["source"] for item in dashboard["logs"]} & {"audit", "chain", "realtime", "request_trace"})
+
+    def test_demo_run_emits_realtime_planning_and_gateway_events_for_session(self) -> None:
+        session_id = "unit-live-session"
+        self.client.post(
+            "/api/demo/run",
+            json={
+                "scenario_id": "normal_mail_summary",
+                "mode": "full",
+                "planner_mode": "demo_safe",
+                "session_id": session_id,
+            },
+        )
+        events = self.app.state.container.events.snapshot()
+        scoped = [event for event in events if (event.get("payload") or {}).get("session_id") == session_id]
+        kinds = {event["kind"] for event in scoped}
+        self.assertIn("planning_trace", kinds)
+        self.assertIn("gateway_trace", kinds)
+        self.assertIn("demo_run", kinds)
 
     def test_frontend_logs_are_ingested_into_dashboard(self) -> None:
         response = self.client.post(
@@ -380,27 +425,52 @@ class OpenQFlowTests(unittest.TestCase):
         self.assertTrue(any(item["source"] == "frontend" for item in dashboard["logs"]))
         self.assertTrue(any(item["kind"] == "frontend_log" for item in dashboard["logs"]))
 
-    def test_openclaw_retries_with_repair_prompt_when_response_has_no_json(self) -> None:
+    def test_real_strict_openclaw_invalid_json_returns_planning_failed(self) -> None:
         scenario = self.app.state.container.orchestrator.scenario_map()["safe_prompt_update"]
-        calls = iter([
-            "当然可以，我会更新共享提示词模板并保留最小权限约束。",
-            '{"assistant_reply":"ok","calls":[{"tool_name":"call_app_api","resource_type":"state","app":"state","action":"update_prompt","args":{"target":"prompt/shared.txt","content":"safe"},"metadata":{}}]}',
-        ])
 
         async def fake_request_chat_reply(*args, **kwargs):
-            return next(calls)
+            return "当然可以，我会更新共享提示词模板并保留最小权限约束。"
 
-        with self.allow_chain_authorization():
-            with patch.object(self.app.state.container.orchestrator.openclaw, "_request_chat_reply", side_effect=fake_request_chat_reply):
-                result = self.client.post(
-                    "/api/demo/run",
-                    json={"scenario_id": scenario.scenario_id, "mode": "full", "use_real_openclaw": True},
-                )
+        with patch.object(self.app.state.container.orchestrator.openclaw, "_request_chat_reply", side_effect=fake_request_chat_reply):
+            result = self.client.post(
+                "/api/demo/run",
+                json={"scenario_id": scenario.scenario_id, "mode": "full", "planner_mode": "real_strict"},
+            )
         self.assertEqual(result.status_code, 200)
         payload = result.json()
-        self.assertEqual(payload["openclaw_plan"]["backend"], "openclaw_ws")
+        self.assertEqual(payload["final_status"], "planning_failed")
+        self.assertEqual(payload["blocked_layer"], "planning")
+        self.assertTrue(payload["planning_failed"])
+        self.assertIn("JSON object", payload["planning_failed_reason"])
+        self.assertFalse(payload["traces"])
+
+    def test_real_debug_captures_raw_output_without_execution(self) -> None:
+        scenario = self.app.state.container.orchestrator.scenario_map()["safe_prompt_update"]
+
+        async def fake_request_chat_reply(*args, **kwargs):
+            return (
+                '{"assistant_reply":"准备更新共享提示词","calls":[{"tool_name":"call_app_api","resource_type":"state",'
+                '"app":"state","action":"update_prompt","args":{"target":"prompt/shared.txt","patch":{"insert_line":3,"text":"遇到高风险动作时，必须先请求人工确认。\\n"}},'
+                '"metadata":{}}]}'
+            )
+
+        with patch.object(self.app.state.container.orchestrator.openclaw, "_request_chat_reply", side_effect=fake_request_chat_reply):
+            result = self.client.post(
+                "/api/demo/run",
+                json={"scenario_id": scenario.scenario_id, "mode": "full", "planner_mode": "real_debug"},
+            )
+        self.assertEqual(result.status_code, 200)
+        payload = result.json()
+        self.assertEqual(payload["final_status"], "planning_debug")
+        self.assertEqual(payload["blocked_layer"], "planning")
+        self.assertFalse(payload["traces"])
+        self.assertFalse(payload["openclaw_plan"]["planning_valid"])
+        self.assertTrue(payload["openclaw_plan"]["diagnostics"]["debug_halt"])
         self.assertTrue(payload["openclaw_plan"]["raw_response"])
-        self.assertEqual(payload["openclaw_plan"]["calls"][0]["action"], "update_prompt")
+        self.assertEqual(
+            self.app.state.container.state_store.read("prompt/shared.txt"),
+            "你是 OpenQ 的受保护共享提示词。\n你只能通过统一网关访问虚拟 App，并遵循最小权限原则。\n",
+        )
 
     def test_mode_compare_returns_actual_results_for_all_modes(self) -> None:
         response = self.client.post(
@@ -409,7 +479,7 @@ class OpenQFlowTests(unittest.TestCase):
                 "scenario_id": "prompt_injection_transfer",
                 "mode": "full",
                 "include_mode_compare": True,
-                "use_real_openclaw": False,
+                "planner_mode": "demo_safe",
             },
         )
         payload = response.json()
@@ -424,7 +494,7 @@ class OpenQFlowTests(unittest.TestCase):
         with self.allow_chain_authorization():
             response = self.client.post(
                 "/api/demo/run",
-                json={"scenario_id": "memory_poisoning", "mode": "full", "use_real_openclaw": False},
+                json={"scenario_id": "memory_poisoning", "mode": "full", "planner_mode": "demo_safe"},
             )
         payload = response.json()
         self.assertEqual(payload["final_status"], "blocked")
@@ -438,6 +508,8 @@ class OpenQFlowTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["did"], self.app.state.container.chain.demo_identity().did)
         self.assertEqual(payload["metadata"]["debug_source"], "demo_console_state_request")
+        self.assertIn("patch", payload["args"])
+        self.assertNotIn("content", payload["args"])
         self.assertTrue(payload["signature"])
         self.assertTrue(payload["payload_hash"])
 
@@ -457,14 +529,14 @@ class OpenQFlowTests(unittest.TestCase):
     def test_demo_run_response_does_not_expose_oracle_or_debug_plan(self) -> None:
         payload = self.client.post(
             "/api/demo/run",
-            json={"scenario_id": "normal_mail_summary", "mode": "full", "use_real_openclaw": False},
+            json={"scenario_id": "normal_mail_summary", "mode": "full", "planner_mode": "demo_safe"},
         ).json()
         self.assertIn("scenario", payload)
         self.assertNotIn("debug_plan", payload["scenario"])
         self.assertNotIn("evaluation_oracle", payload["scenario"])
         self.assertNotIn("planning_constraints", payload["scenario"])
 
-    def test_real_openclaw_failure_returns_gateway_error(self) -> None:
+    def test_real_openclaw_failure_returns_structured_planning_failed(self) -> None:
         with patch.object(
             self.app.state.container.orchestrator.openclaw,
             "generate_plan",
@@ -472,10 +544,14 @@ class OpenQFlowTests(unittest.TestCase):
         ):
             response = self.client.post(
                 "/api/demo/run",
-                json={"scenario_id": "normal_mail_summary", "mode": "full", "use_real_openclaw": True},
+                json={"scenario_id": "normal_mail_summary", "mode": "full", "planner_mode": "real_strict"},
             )
-        self.assertEqual(response.status_code, 502)
-        self.assertIn("openclaw planning failed", response.json()["detail"])
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["final_status"], "planning_failed")
+        self.assertEqual(payload["blocked_layer"], "planning")
+        self.assertEqual(payload["openclaw_plan"]["planning_valid"], False)
+        self.assertIn("malformed structured output", payload["planning_failed_reason"])
 
     def test_state_update_endpoint_rejects_legacy_unsigned_payload(self) -> None:
         response = self.client.post(
@@ -489,6 +565,22 @@ class OpenQFlowTests(unittest.TestCase):
         payload = response.json()
         self.assertIn("backend", payload)
         self.assertIn("available", payload)
+
+    def test_experiments_stop_after_max_planning_failures(self) -> None:
+        with patch.object(
+            self.app.state.container.orchestrator.openclaw,
+            "generate_plan",
+            side_effect=OpenClawPlanningError("planner offline"),
+        ):
+            response = self.client.post(
+                "/api/experiments/run",
+                json={"planner_mode": "real_strict", "max_planning_failures": 1},
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["early_terminated"])
+        self.assertEqual(payload["planning_failures"], 1)
+        self.assertIn("threshold 1", payload["termination_reason"])
 
 
 if __name__ == "__main__":
