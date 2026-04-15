@@ -1,0 +1,6 @@
+# DashScope local configuration.
+# Fill in your API key here for local development.
+# Example:
+# api_key: "sk-xxxx"
+api_key: "sk-6b48b61296314004b21a70c6335244dd"
+base_url: "https://dashscope.aliyuncs.com/api/v1"

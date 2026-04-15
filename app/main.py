@@ -95,7 +95,7 @@ def build_container() -> AppContainer:
         chain=chain,
         builder=builder,
         gateway=gateway,
-        openclaw=OpenClawFacade(settings.real_openclaw_url, settings.openclaw_state_dir),
+        openclaw=OpenClawFacade(settings.real_openclaw_url, settings.openclaw_state_dir, events=events),
         scenario_fixture=settings.scenario_fixture,
         audit=audit,
         events=events,

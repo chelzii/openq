@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 
@@ -32,6 +33,26 @@ class Settings:
 
     @classmethod
     def load(cls) -> "Settings":
+        def env_path(name: str, default: Path) -> Path:
+            value = os.getenv(name, "").strip()
+            return Path(value).expanduser() if value else default
+
+        def env_str(name: str, default: str) -> str:
+            value = os.getenv(name, "").strip()
+            return value or default
+
+        def env_ports(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
+            raw = os.getenv(name, "").strip()
+            if not raw:
+                return default
+            ports: list[int] = []
+            for item in raw.split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                ports.append(int(item))
+            return tuple(ports) or default
+
         root_dir = Path(__file__).resolve().parents[2]
         data_dir = root_dir / "data"
         return cls(
@@ -43,7 +64,7 @@ class Settings:
             audit_export_dir=data_dir / "experiments",
             chain_registry=data_dir / "chain" / "registry.json",
             signer_identity=data_dir / "chain" / "identities.json",
-            openclaw_state_dir=Path.home() / ".openclaw",
+            openclaw_state_dir=env_path("OPENCLAW_STATE_DIR", Path.home() / ".openclaw"),
             chain_console_script=root_dir / "scripts" / "fisco-console.sh",
             chain_contract_source=root_dir / "contracts" / "OpenQRegistry.sol",
             chain_console_contract_dir=root_dir / "runtime-deps" / "fisco-portable" / "console" / "contracts" / "solidity",
@@ -56,4 +77,6 @@ class Settings:
             assets_fixture=data_dir / "fixtures" / "assets.json",
             templates_dir=root_dir / "app" / "demo" / "templates",
             static_dir=root_dir / "app" / "demo" / "static",
+            real_openclaw_url=env_str("OPENCLAW_URL", "ws://localhost:18789"),
+            chain_probe_ports=env_ports("OPENQ_CHAIN_PROBE_PORTS", (20200, 20201)),
         )

@@ -12,6 +12,12 @@ class Mode(str, Enum):
     FULL = "full"
 
 
+class PlannerMode(str, Enum):
+    REAL_STRICT = "real_strict"
+    REAL_DEBUG = "real_debug"
+    DEMO_SAFE = "demo_safe"
+
+
 class ResourceType(str, Enum):
     APP = "app"
     STATE = "state"
@@ -57,6 +63,14 @@ class OpenClawPlan(BaseModel):
     assistant_reply: str
     calls: list[OpenClawToolCall]
     backend: str
+    planner_mode: PlannerMode = PlannerMode.REAL_STRICT
+    planning_source: str = "openclaw"
+    planning_valid: bool = True
+    planning_error: str | None = None
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+    plan_hash: str | None = None
+    planning_session_id: str | None = None
+    planning_prompt: str | None = None
     raw_response: str | None = None
     degraded: bool = False
     degraded_reason: str | None = None
@@ -263,7 +277,7 @@ class DemoRunRequest(BaseModel):
     scenario_id: str
     mode: Mode
     session_id: str = "demo-session"
-    use_real_openclaw: bool = True
+    planner_mode: PlannerMode = PlannerMode.REAL_STRICT
     include_mode_compare: bool = False
     approval_token: str | None = None
     user_task_override: str | None = None
@@ -274,6 +288,11 @@ class ManualStateUpdateRequest(BaseModel):
     content: str
     mode: Mode
     approval_token: str | None = None
+
+
+class ExperimentRunRequest(BaseModel):
+    planner_mode: PlannerMode = PlannerMode.REAL_STRICT
+    max_planning_failures: int | None = Field(default=6, ge=1)
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -322,6 +341,9 @@ class DemoRunResponse(BaseModel):
     final_status: str
     blocked_layer: str | None = None
     summary: str
+    evidence_summary: str | None = None
+    planning_failed: bool = False
+    planning_failed_reason: str | None = None
     mode_compare: list["ModeCompareResult"] = Field(default_factory=list)
 
 
@@ -331,7 +353,10 @@ class ModeCompareResult(BaseModel):
     blocked_layer: str | None = None
     request_id: str | None = None
     summary: str
+    evidence_summary: str | None = None
     openclaw_backend: str | None = None
+    planning_failed: bool = False
+    planning_failed_reason: str | None = None
 
 
 class RequestTraceBundle(BaseModel):
@@ -339,11 +364,22 @@ class RequestTraceBundle(BaseModel):
     source: str
     assistant_reply: str | None = None
     openclaw_backend: str | None = None
+    planner_mode: PlannerMode = PlannerMode.REAL_STRICT
+    planning_source: str | None = None
+    planning_valid: bool = True
+    planning_error: str | None = None
+    planning_diagnostics: dict[str, Any] = Field(default_factory=dict)
+    plan_hash: str | None = None
+    planning_session_id: str | None = None
+    planning_prompt: str | None = None
     openclaw_raw_response: str | None = None
     traces: list[ExecutionTrace] = Field(default_factory=list)
     final_status: str | None = None
     blocked_layer: str | None = None
     summary: str | None = None
+    evidence_summary: str | None = None
+    planning_failed: bool = False
+    planning_failed_reason: str | None = None
     mode_compare: list[ModeCompareResult] = Field(default_factory=list)
 
 
@@ -358,6 +394,16 @@ class ExperimentRecord(BaseModel):
     scenario_type: str
     mode: Mode
     request_id: str
+    planner_mode: PlannerMode = PlannerMode.REAL_STRICT
+    planning_source: str | None = None
+    planning_valid: bool = True
+    planning_error: str | None = None
+    planning_diagnostics: dict[str, Any] = Field(default_factory=dict)
+    plan_hash: str | None = None
+    planning_session_id: str | None = None
+    plan_replay_group: str | None = None
+    plan_reused_across_modes: bool = False
+    plan_hash_consistent: bool | None = None
     planned_actions: list[str] = Field(default_factory=list)
     plan_matches_oracle: bool = True
     missing_expected_actions: list[str] = Field(default_factory=list)
@@ -368,6 +414,7 @@ class ExperimentRecord(BaseModel):
     latency_ms: float
     false_positive: bool
     audit_written: bool
+    planning_failed: bool = False
     intent_similarity: float | None = None
     reranker_score: float | None = None
     permission_key: str | None = None
@@ -391,11 +438,14 @@ class ExperimentAggregate(BaseModel):
     total: int
     blocked: int
     executed: int
+    planning_failed: int = 0
     correct: int
     false_positive_rate: float
     interception_rate: float
     state_detection_rate: float
     avg_latency_ms: float
+    planning_failed_rate: float = 0.0
+    plan_hash_consistency_rate: float = 0.0
 
 
 class ExperimentReport(BaseModel):
@@ -404,6 +454,10 @@ class ExperimentReport(BaseModel):
     run_id: str | None = None
     total_scenarios: int | None = None
     total_runs: int | None = None
+    planning_failures: int = 0
+    max_planning_failures: int | None = None
+    early_terminated: bool = False
+    termination_reason: str | None = None
     paper_ablation_runs: int | None = None
     exported_dir: str | None = None
     exported_json: str

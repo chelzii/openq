@@ -11,8 +11,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.responses import StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from app.core.actions import state_action_for_target
-from app.core.openclaw import OpenClawPlanningError
+from app.core.actions import build_structured_state_args, state_action_for_target
 from app.core.utils import sha256_text
 from app.schemas import (
     ApprovalDecisionRequest,
@@ -25,6 +24,7 @@ from app.schemas import (
     DashboardSnapshot,
     DemoRunRequest,
     ExecutionTrace,
+    ExperimentRunRequest,
     ManualStateUpdateRequest,
     OpenClawToolCall,
     RequestTraceBundle,
@@ -126,6 +126,149 @@ def _build_chain_log_from_request_trace(request_id: str, trace_bundle: dict[str,
         block_number=chain_block_number,
         timestamp=_pick_log_timestamp(payload, default=_iso_now()),
     )
+
+
+def _request_trace_timeline(trace_bundle: dict[str, Any]) -> list[dict[str, Any]]:
+    request_id = str(trace_bundle.get("request_id") or "")
+    trace_timestamp = str(trace_bundle.get("recorded_at") or _iso_now())
+    planner_mode = trace_bundle.get("planner_mode")
+    timeline: list[dict[str, Any]] = []
+
+    def append_event(
+        stage: str,
+        title: str,
+        summary: str,
+        payload: dict[str, Any],
+        *,
+        status: str | None = None,
+        step_index: int | None = None,
+    ) -> None:
+        timeline.append(
+            {
+                "stage": stage,
+                "title": title,
+                "summary": summary,
+                "status": status,
+                "step_index": step_index,
+                "request_id": request_id or None,
+                "timestamp": trace_timestamp,
+                "payload": payload,
+            }
+        )
+
+    append_event(
+        "planning_input",
+        "OpenClaw Prompt",
+        "发送给 OpenClaw 的完整规划 prompt",
+        {
+            "planner_mode": planner_mode,
+            "planning_session_id": trace_bundle.get("planning_session_id"),
+            "planning_prompt": trace_bundle.get("planning_prompt"),
+            "source": trace_bundle.get("planning_source"),
+        },
+        status="captured" if trace_bundle.get("planning_prompt") else "missing",
+    )
+    if trace_bundle.get("openclaw_raw_response") is not None:
+        append_event(
+            "planning_output_raw",
+            "OpenClaw 原始回复",
+            "OpenClaw gateway 返回的原始文本",
+            {
+                "planner_mode": planner_mode,
+                "backend": trace_bundle.get("openclaw_backend"),
+                "raw_response": trace_bundle.get("openclaw_raw_response"),
+            },
+            status="captured",
+        )
+    append_event(
+        "planning_result",
+        "结构化规划结果",
+        "解析后的 assistant_reply、calls 和规划诊断",
+        {
+            "assistant_reply": trace_bundle.get("assistant_reply"),
+            "planning_valid": trace_bundle.get("planning_valid"),
+            "planning_error": trace_bundle.get("planning_error"),
+            "planning_failed": trace_bundle.get("planning_failed"),
+            "planning_failed_reason": trace_bundle.get("planning_failed_reason"),
+            "plan_hash": trace_bundle.get("plan_hash"),
+            "diagnostics": trace_bundle.get("planning_diagnostics") or {},
+            "mode_compare": trace_bundle.get("mode_compare") or [],
+            "planned_calls": [
+                {
+                    "step_index": index,
+                    "tool_name": trace.get("request", {}).get("app"),
+                }
+                for index, trace in enumerate(trace_bundle.get("traces") or [], start=1)
+            ],
+        },
+        status="ok" if trace_bundle.get("planning_valid", True) else "failed",
+    )
+
+    traces = trace_bundle.get("traces") or []
+    for trace in traces:
+        if not isinstance(trace, dict):
+            continue
+        step_index = int(trace.get("step_index") or 0)
+        request = trace.get("request") or {}
+        response = trace.get("response") or {}
+        action_name = f'{request.get("app", "unknown")}.{request.get("action", "unknown")}'
+        append_event(
+            "tool_request",
+            f"Step {step_index} Request",
+            f"{action_name} 请求已发往统一网关",
+            request,
+            status="sent",
+            step_index=step_index,
+        )
+        if response.get("guard") is not None:
+            guard = response.get("guard") or {}
+            append_event(
+                "guard_result",
+                f"Step {step_index} Guard",
+                f'护栏阶段：{guard.get("decision_stage") or response.get("status")}',
+                guard,
+                status="blocked" if response.get("blocked_layer") == "guard" else "passed",
+                step_index=step_index,
+            )
+        if response.get("auth") is not None:
+            auth = response.get("auth") or {}
+            append_event(
+                "chain_result",
+                f"Step {step_index} Chain/Auth",
+                f'链上验权：{auth.get("reason") or response.get("status")}',
+                auth,
+                status="blocked" if response.get("blocked_layer") == "chain" else ("degraded" if auth.get("degraded_allowed") else "passed"),
+                step_index=step_index,
+            )
+        if response.get("state_change") is not None:
+            state_change = response.get("state_change") or {}
+            append_event(
+                "state_result",
+                f"Step {step_index} State",
+                f'状态保护：{state_change.get("approval_status") or ("rolled_back" if state_change.get("rollback_performed") else response.get("status"))}',
+                state_change,
+                status="blocked" if response.get("blocked_layer") == "state" else ("review" if state_change.get("approval_required") else "applied"),
+                step_index=step_index,
+            )
+        append_event(
+            "tool_response",
+            f"Step {step_index} Result",
+            response.get("message") or response.get("status") or "unknown",
+            response,
+            status=response.get("status"),
+            step_index=step_index,
+        )
+        if response.get("audit") is not None:
+            audit = response.get("audit") or {}
+            append_event(
+                "audit_result",
+                f"Step {step_index} Audit",
+                f'审计锚点：{audit.get("chain_receipt") or audit.get("entry_hash") or "N/A"}',
+                audit,
+                status="written" if audit.get("entry_hash") else "missing",
+                step_index=step_index,
+            )
+    return timeline
 
 
 def _build_dashboard_logs(container, limit: int = 30) -> list[UnifiedLogEntry]:
@@ -292,6 +435,11 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
     def build_manual_state_call(container, payload: ManualStateUpdateRequest) -> CallAppRequest:
         action = state_action_for_target(payload.target)
         request_seed = "\n".join([payload.target, payload.content, payload.mode.value])
+        structured_args = build_structured_state_args(
+            payload.target,
+            container.state_store.read(payload.target),
+            payload.content,
+        )
         request_id = f"manual-state-{sha256_text(request_seed)[:16]}"
         call = container.builder.build(
             session_id="manual-state",
@@ -300,7 +448,7 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
                 resource_type=ResourceType.STATE,
                 app="state",
                 action=action,
-                args={"target": payload.target, "content": payload.content},
+                args=structured_args,
                 metadata={
                     **({"approval_token": payload.approval_token} if payload.approval_token else {}),
                     "debug_source": "demo_console_state_request",
@@ -369,10 +517,7 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
 
     @router.post("/api/demo/run")
     async def run_demo(request: Request, payload: DemoRunRequest) -> dict:
-        try:
-            response = await request.app.state.container.orchestrator.run_demo(payload)
-        except OpenClawPlanningError as exc:
-            raise HTTPException(status_code=502, detail=f"openclaw planning failed: {exc}") from exc
+        response = await request.app.state.container.orchestrator.run_demo(payload)
         return response.model_dump(mode="json")
 
     @router.post("/api/state/update")
@@ -473,8 +618,12 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
         return response.model_dump(mode="json")
 
     @router.post("/api/experiments/run")
-    async def run_experiments(request: Request) -> dict:
-        response = await request.app.state.container.orchestrator.run_experiments()
+    async def run_experiments(request: Request, payload: ExperimentRunRequest | None = None) -> dict:
+        request_payload = payload or ExperimentRunRequest()
+        response = await request.app.state.container.orchestrator.run_experiments(
+            planner_mode=request_payload.planner_mode,
+            max_planning_failures=request_payload.max_planning_failures,
+        )
         return response.model_dump(mode="json")
 
     @router.get("/api/audit/recent")
@@ -514,6 +663,11 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
             "chain": chain,
             "approvals": [item.model_dump(mode="json") for item in approvals],
             "request_trace": container.audit.request_trace(request_id) if request_id else None,
+            "request_trace_timeline": (
+                _request_trace_timeline(container.audit.request_trace(request_id))
+                if request_id and container.audit.request_trace(request_id)
+                else []
+            ),
             "timeline": [item.model_dump(mode="json") for item in timeline],
         }
 
@@ -568,9 +722,10 @@ def build_router(templates: Jinja2Templates) -> APIRouter:
                     for event in events:
                         last_seq = int(event["seq"])
                         yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(0)
                 else:
                     yield ": ping\n\n"
-                await asyncio.sleep(1)
+                    await asyncio.sleep(0.15)
 
         return StreamingResponse(
             generator(),

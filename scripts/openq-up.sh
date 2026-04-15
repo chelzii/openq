@@ -10,9 +10,12 @@ SCRIPT_LOG="${LOG_DIR}/openq-up.log"
 FISCO_LOG="${LOG_DIR}/fisco-up.log"
 
 OPENCLAW_PORT="${OPENCLAW_PORT:-18789}"
+OPENCLAW_URL="${OPENCLAW_URL:-ws://127.0.0.1:${OPENCLAW_PORT}}"
 APP_PORT="${OPENQ_PORT:-8000}"
 APP_HOST="${OPENQ_HOST:-0.0.0.0}"
 APP_URL_HOST="${OPENQ_URL_HOST:-127.0.0.1}"
+
+export OPENCLAW_URL
 
 OPENCLAW_PID_FILE="${PID_DIR}/openclaw.pid"
 APP_PID_FILE="${PID_DIR}/app.pid"
@@ -52,7 +55,17 @@ fisco_running() {
 }
 
 openclaw_healthy() {
-    openclaw health >/dev/null 2>&1
+    python3 - "${OPENCLAW_URL}" <<'PY' >/dev/null 2>&1
+import socket
+import sys
+from urllib.parse import urlparse
+
+target = urlparse(sys.argv[1])
+host = target.hostname or "127.0.0.1"
+port = target.port or (443 if target.scheme == "wss" else 80)
+with socket.create_connection((host, port), timeout=1.5):
+    pass
+PY
 }
 
 app_healthy() {
@@ -109,7 +122,7 @@ fi
 echo
 echo "[INFO] 启动完成"
 echo "[INFO] 演示页: http://${APP_URL_HOST}:${APP_PORT}"
-echo "[INFO] OpenClaw: ws://127.0.0.1:${OPENCLAW_PORT}"
+echo "[INFO] OpenClaw: ${OPENCLAW_URL}"
 echo "[INFO] OpenClaw 状态: http://${APP_URL_HOST}:${APP_PORT}/api/openclaw/status"
 echo "[INFO] 链状态: http://${APP_URL_HOST}:${APP_PORT}/api/chain/status"
 echo "[INFO] 日志目录: ${LOG_DIR}"
