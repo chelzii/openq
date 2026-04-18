@@ -331,6 +331,20 @@ class ScenarioPublicView(BaseModel):
     user_task: str
 
 
+class DemoXRayPresentation(BaseModel):
+    guard_status: str
+    chain_status: str
+    sandbox_status: str
+
+
+class DemoPresentation(BaseModel):
+    final_status_text: str
+    final_hint_text: str
+    verdict_title: str
+    verdict_summary: str
+    xray: DemoXRayPresentation
+
+
 class DemoRunResponse(BaseModel):
     scenario: ScenarioPublicView
     mode: Mode
@@ -345,6 +359,7 @@ class DemoRunResponse(BaseModel):
     planning_failed: bool = False
     planning_failed_reason: str | None = None
     mode_compare: list["ModeCompareResult"] = Field(default_factory=list)
+    presentation: DemoPresentation | None = None
 
 
 class ModeCompareResult(BaseModel):

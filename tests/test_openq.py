@@ -14,6 +14,127 @@ from app.main import build_container, create_app
 from app.schemas import CallContext, Mode, OpenClawToolCall, ResourceType
 
 
+FULL_MODE_PRESENTATION_EXPECTATIONS = {
+    "normal_mail_summary": {
+        "final_status": "executed",
+        "blocked_layer": None,
+        "final_status_text": "执行完成",
+        "verdict_title": "✅ 正常请求：执行成功",
+        "guard_status": "已放行",
+        "chain_status": "校验通过",
+        "sandbox_status": "执行完成",
+    },
+    "normal_weather_check": {
+        "final_status": "executed",
+        "blocked_layer": None,
+        "final_status_text": "执行完成",
+        "verdict_title": "✅ 正常请求：执行成功",
+        "guard_status": "已放行",
+        "chain_status": "校验通过",
+        "sandbox_status": "执行完成",
+    },
+    "normal_balance_check": {
+        "final_status": "executed",
+        "blocked_layer": None,
+        "final_status_text": "执行完成",
+        "verdict_title": "✅ 正常请求：执行成功",
+        "guard_status": "已放行",
+        "chain_status": "校验通过",
+        "sandbox_status": "执行完成",
+    },
+    "normal_gallery_listing": {
+        "final_status": "executed",
+        "blocked_layer": None,
+        "final_status_text": "执行完成",
+        "verdict_title": "✅ 正常请求：执行成功",
+        "guard_status": "已放行",
+        "chain_status": "校验通过",
+        "sandbox_status": "执行完成",
+    },
+    "safe_prompt_update": {
+        "final_status": "executed",
+        "blocked_layer": None,
+        "final_status_text": "执行完成",
+        "verdict_title": "✅ 正常请求：执行成功",
+        "guard_status": "已放行",
+        "chain_status": "校验通过",
+        "sandbox_status": "执行完成",
+    },
+    "implicit_privacy_hint": {
+        "final_status": "blocked",
+        "blocked_layer": "chain",
+        "final_status_text": "已阻断 · 链上权限",
+        "verdict_title": "⛔ 攻击已被链上权限阻断",
+        "guard_status": "已放行",
+        "chain_status": "验权失败",
+        "sandbox_status": "未执行",
+    },
+    "invalid_signature_balance_probe": {
+        "final_status": "blocked",
+        "blocked_layer": "chain",
+        "final_status_text": "已阻断 · 链上权限",
+        "verdict_title": "⛔ 非法签名已被链上验签阻断",
+        "guard_status": "已放行",
+        "chain_status": "验权失败",
+        "sandbox_status": "未执行",
+    },
+    "chain_offline_weather_probe": {
+        "final_status": "executed",
+        "blocked_layer": None,
+        "final_status_text": "执行完成",
+        "verdict_title": "🛟 链离线下已按只读降级策略放行",
+        "guard_status": "已放行",
+        "chain_status": "链降级放行",
+        "sandbox_status": "执行完成",
+    },
+    "prompt_injection_transfer": {
+        "final_status": "blocked",
+        "blocked_layer": "guard",
+        "final_status_text": "已阻断 · 意图护栏",
+        "verdict_title": "⛔ 攻击已被意图护栏阻断",
+        "guard_status": "已拦截",
+        "chain_status": "未到达",
+        "sandbox_status": "未执行",
+    },
+    "cross_app_privacy_leak": {
+        "final_status": "blocked",
+        "blocked_layer": "chain",
+        "final_status_text": "已阻断 · 链上权限",
+        "verdict_title": "⛔ 攻击已被链上权限阻断",
+        "guard_status": "已放行",
+        "chain_status": "验权失败",
+        "sandbox_status": "未执行",
+    },
+    "config_tampering": {
+        "final_status": "blocked",
+        "blocked_layer": "state",
+        "final_status_text": "已阻断 · 状态防护",
+        "verdict_title": "⛔ 高危写入已被状态防护阻断",
+        "guard_status": "已放行",
+        "chain_status": "校验通过",
+        "sandbox_status": "已回滚",
+    },
+    "prompt_shared_poisoning": {
+        "final_status": "blocked",
+        "blocked_layer": "state",
+        "final_status_text": "已阻断 · 状态防护",
+        "verdict_title": "⛔ 高危写入已被状态防护阻断",
+        "guard_status": "已放行",
+        "chain_status": "校验通过",
+        "sandbox_status": "已回滚",
+    },
+    "memory_poisoning": {
+        "final_status": "blocked",
+        "blocked_layer": "state",
+        "final_status_text": "已阻断 · 状态防护",
+        "verdict_title": "⛔ 高危写入已被状态防护阻断",
+        "guard_status": "已放行",
+        "chain_status": "校验通过",
+        "sandbox_status": "已回滚",
+    },
+}
+
+
 class OpenQFlowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -346,6 +467,56 @@ class OpenQFlowTests(unittest.TestCase):
         self.assertEqual(payload["final_status"], "executed")
         auth = payload["traces"][-1]["response"]["auth"]
         self.assertTrue(auth["degraded_allowed"])
+        self.assertIn("只读降级策略放行", payload["evidence_summary"])
+
+    def test_chain_unavailable_blocked_summary_mentions_fail_closed(self) -> None:
+        container = self.app.state.container
+        with patch.object(
+            container.chain,
+            "authorize",
+            return_value=ChainAuthorization(
+                verified=False,
+                permission_allowed=False,
+                backend="fisco_bcos_unavailable",
+                reason="console_connect_failed",
+                permission_key="bank.get_balance",
+                chain_available=False,
+                block_number=None,
+            ),
+        ):
+            response = self.client.post(
+                "/api/demo/run",
+                json={"scenario_id": "normal_balance_check", "mode": "full", "planner_mode": "demo_safe"},
+            )
+        payload = response.json()
+        self.assertEqual(payload["final_status"], "blocked")
+        self.assertEqual(payload["blocked_layer"], "chain")
+        self.assertIn("fail-closed", payload["evidence_summary"])
+        self.assertIn("console_connect_failed", payload["evidence_summary"])
+
+    def test_invalid_signature_summary_mentions_signature_validation(self) -> None:
+        container = self.app.state.container
+        with patch.object(
+            container.chain,
+            "authorize",
+            return_value=ChainAuthorization(
+                verified=False,
+                permission_allowed=False,
+                backend="fisco_bcos_contract_registry",
+                reason="signature_invalid",
+                permission_key="bank.get_balance",
+                chain_available=True,
+                block_number=1,
+            ),
+        ):
+            response = self.client.post(
+                "/api/demo/run",
+                json={"scenario_id": "invalid_signature_balance_probe", "mode": "full", "planner_mode": "demo_safe"},
+            )
+        payload = response.json()
+        self.assertEqual(payload["final_status"], "blocked")
+        self.assertEqual(payload["blocked_layer"], "chain")
+        self.assertIn("签名无效", payload["evidence_summary"])
 
     def test_request_trace_filter_returns_matching_records(self) -> None:
         response = self.client.post(
@@ -581,6 +752,41 @@ class OpenQFlowTests(unittest.TestCase):
         self.assertTrue(payload["early_terminated"])
         self.assertEqual(payload["planning_failures"], 1)
         self.assertIn("threshold 1", payload["termination_reason"])
+
+    def test_full_mode_13_scenarios_have_consistent_presentation_contract(self) -> None:
+        for scenario_id, expected in FULL_MODE_PRESENTATION_EXPECTATIONS.items():
+            with self.subTest(scenario_id=scenario_id):
+                payload = self.client.post(
+                    "/api/demo/run",
+                    json={"scenario_id": scenario_id, "mode": "full", "planner_mode": "demo_safe"},
+                ).json()
+                presentation = payload["presentation"]
+                xray = presentation["xray"]
+
+                self.assertEqual(payload["final_status"], expected["final_status"])
+                self.assertEqual(payload["blocked_layer"], expected["blocked_layer"])
+                self.assertEqual(presentation["final_status_text"], expected["final_status_text"])
+                self.assertEqual(presentation["verdict_title"], expected["verdict_title"])
+                self.assertEqual(xray["guard_status"], expected["guard_status"])
+                self.assertEqual(xray["chain_status"], expected["chain_status"])
+                self.assertEqual(xray["sandbox_status"], expected["sandbox_status"])
+
+                if expected["blocked_layer"] in {"guard", "chain"}:
+                    self.assertEqual(xray["sandbox_status"], "未执行")
+                if scenario_id == "chain_offline_weather_probe":
+                    last = payload["traces"][-1]["response"]
+                    self.assertTrue(last["auth"]["degraded_allowed"])
+                    self.assertEqual(xray["chain_status"], "链降级放行")
+                if expected["blocked_layer"] == "state":
+                    last = payload["traces"][-1]["response"]
+                    self.assertTrue(last["state_change"]["rollback_performed"])
+                    self.assertEqual(last["state_change"]["approval_status"], "pending")
+
+    def test_frontend_uses_server_presentation_contract_for_demo_result(self) -> None:
+        index_html = self.client.get("/").text
+        self.assertIn("const presentation = result.presentation || {}", index_html)
+        self.assertIn("presentation.final_status_text ||", index_html)
+        self.assertIn("presentation.verdict_title ||", index_html)
 
 
 if __name__ == "__main__":

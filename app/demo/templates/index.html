@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OpenQ 虚拟终端安全防御</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f172a'/%3E%3Cpath d='M32 10l18 8v12c0 11-7 20-18 24C21 50 14 41 14 30V18l18-8z' fill='%2310b981'/%3E%3Cpath d='M24 31l6 6 10-12' fill='none' stroke='white' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=2.0">
   <!-- 引入图标库 (FontAwesome) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
@@ -68,6 +68,19 @@
       </div>
     </header>
 
+    <!-- 顶层分页导航 -->
+    <div class="top-page-tabs">
+      <button class="top-page-btn active" onclick="switchTopPage(this, 'top-page-console')">
+        <i class="fa-solid fa-shield-halved"></i> 核心攻防终端
+      </button>
+      <button class="top-page-btn" onclick="switchTopPage(this, 'top-page-experiments')">
+        <i class="fa-solid fa-chart-line"></i> 课题与统一证据
+      </button>
+    </div>
+
+    <!-- Page 1: 核心控制台 -->
+    <div id="top-page-console" class="top-page-content active">
+
     <!-- 全局结论看板 (Global Verdict Board) -->
     <section class="verdict-board" id="verdict-board" style="display:none;">
       <div class="verdict-status" id="verdict-status-icon">
@@ -115,10 +128,24 @@
           {% endfor %}
         </select>
 
-        <!-- 恢复用户自定义输入的展示 (证据层：证明这不是录好的假Demo) -->
+        <!-- 自定义输入覆盖：默认使用场景任务，避免污染后续实验 -->
         <div class="form-group">
-          <label>自定义攻击载荷 (User Task Override)</label>
-          <textarea id="user-task-override" rows="2" placeholder="在此输入自定义攻击提示词..."></textarea>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:6px;">
+            <label style="margin-bottom:0;">自定义攻击载荷 (User Task Override)</label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:0.82rem; color:var(--text-secondary); cursor:pointer;">
+              <input type="checkbox" id="use-custom-task-override" />
+              启用自定义覆盖
+            </label>
+          </div>
+          <textarea id="user-task-override" rows="2" placeholder="默认使用场景内置任务。启用覆盖后，可在此输入自定义攻击提示词..." disabled></textarea>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:6px;">
+            <div id="user-task-override-help" style="font-size:0.8rem; color:var(--text-muted);">
+              当前使用场景默认任务。启用覆盖后，运行请求才会发送这里的内容。
+            </div>
+            <button type="button" id="reset-user-task-override" class="btn btn-sm btn-secondary">
+              <i class="fa-solid fa-rotate-left"></i> 恢复场景默认
+            </button>
+          </div>
         </div>
         
         <!-- 运行控制面板 -->
@@ -269,14 +296,18 @@
       <section class="panel" id="mode-compare-container" style="margin-top:0; display:none; padding:24px; border:1px solid var(--border-color); border-radius:var(--radius-md); background:white;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
           <h2 style="margin:0;"><i class="fa-solid fa-code-compare"></i> 三模式平行沙箱消融对比 (Ablation Compare)</h2>
-          <span class="tag neutral"><i class="fa-solid fa-info-circle"></i> 基于同一份 OpenClaw 生成计划复放</span>
+          <span class="tag warn"><i class="fa-solid fa-triangle-exclamation"></i> 非当前运行结果</span>
         </div>
-        <p style="font-size:0.85rem; color:var(--text-muted); margin-top:0;">注：为控制生成变量，消除大模型随机性导致的结果偏差，以下对比均基于本次推演中生成的同一份调用计划，分别在三种防线配置的隔离沙箱中平行复放的结果。</p>
+        <p style="font-size:0.85rem; color:var(--text-muted); margin-top:0;">注：这里展示的是“同一份 OpenClaw 计划”在三种模式下的平行复放结果，仅用于解释不同防线的差异，不代表你当前选中模式的实际执行结论。</p>
         <div id="mode-compare" class="metrics-grid" style="margin-top:16px; grid-template-columns: repeat(3, 1fr);"></div>
       </section>
 
       </div>
     </main>
+    </div> <!-- End Page 1 -->
+
+    <!-- Page 2: 课题与证据 -->
+    <div id="top-page-experiments" class="top-page-content">
 
     <!-- 底部功能区：实验、审批、日志 (Tabs) -->
     <section class="bottom-panel">
@@ -387,10 +418,20 @@
       </div>
     </section>
 
+      </div> <!-- End Page 2 -->
+
   </div>
 
   <!-- JavaScript 交互逻辑 -->
   <script>
+    // --- 界面交互：顶层分页 ---
+    function switchTopPage(button, pageId) {
+      document.querySelectorAll('.top-page-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.top-page-content').forEach(content => content.classList.remove('active'));
+      if (button && button.classList) button.classList.add('active');
+      document.getElementById(pageId).classList.add('active');
+    }
+
     // --- 界面交互：选项卡 ---
     function switchTab(button, tabId) {
       document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
@@ -415,6 +456,9 @@
     // DOMs
     const scenarioSelect = document.getElementById("scenario"); // hidden
     const userTaskOverride = document.getElementById("user-task-override");
+    const useCustomTaskOverride = document.getElementById("use-custom-task-override");
+    const resetUserTaskOverride = document.getElementById("reset-user-task-override");
+    const userTaskOverrideHelp = document.getElementById("user-task-override-help");
     const modeSelect = document.getElementById("mode");
     const plannerMode = document.getElementById("planner-mode");
     
@@ -680,24 +724,132 @@
       `;
     }
 
+    function blockedLayerLabel(blockedLayer) {
+      const labels = {
+        guard: "意图护栏",
+        chain: "链上权限",
+        state: "状态防护",
+        planning: "规划层",
+        approval: "人工审批",
+        system: "系统保护",
+      };
+      return labels[blockedLayer] || blockedLayer || "系统";
+    }
+
+    function currentScenario() {
+      return scenarioMap[scenarioSelect.value] || null;
+    }
+
+    function currentUserGoal() {
+      const scenario = currentScenario();
+      if (useCustomTaskOverride.checked) {
+        const override = userTaskOverride.value.trim();
+        if (override) return override;
+      }
+      return scenario ? scenario.user_task : userTaskOverride.value.trim();
+    }
+
+    function planDeviationHint(result) {
+      const assessment = result && result.plan_assessment ? result.plan_assessment : null;
+      if (!assessment) return "";
+      const missing = Array.isArray(assessment.missing_expected_actions) ? assessment.missing_expected_actions : [];
+      const planned = Array.isArray(assessment.planned_actions) ? assessment.planned_actions : [];
+      if (missing.length) {
+        const plannedText = planned.length ? planned.join(", ") : "无";
+        return `本次仅规划/执行了 ${plannedText}，未触发实验预期动作 ${missing.join(", ")}。`;
+      }
+      return "";
+    }
+
     function finalStatusText(status, blockedLayer) {
       if (status === "executed") return "执行完成";
-      if (status === "blocked") return blockedLayer ? `已阻断 · ${blockedLayer}` : "已阻断";
+      if (status === "blocked") return blockedLayer ? `已阻断 · ${blockedLayerLabel(blockedLayer)}` : "已阻断";
       if (status === "planning_debug") return "规划诊断已捕获";
       if (status === "planning_failed") return "规划失败";
       if (status === "error") return "系统错误";
       return String(status || "未知状态").toUpperCase();
     }
 
-    function finalStatusHintText(status, blockedLayer, response) {
+    function authContext(result, response = null) {
+      const lastTrace = result && Array.isArray(result.traces) && result.traces.length
+        ? result.traces[result.traces.length - 1]
+        : null;
+      const resp = response || (lastTrace ? lastTrace.response : null) || {};
+      return resp.auth || {};
+    }
+
+    function isBenignScenario(result) {
+      return result && result.scenario && result.scenario.scenario_type === "benign";
+    }
+
+    function isChainOfflineScenario(result) {
+      return result && result.scenario && result.scenario.scenario_type === "chain_offline";
+    }
+
+    function blockedVerdictText(result, response = null) {
+      const auth = authContext(result, response);
+      if (result.blocked_layer === "chain") {
+        if (auth.chain_available === false) {
+          return isBenignScenario(result)
+            ? "⚠️ 正常请求因链不可用被 fail-closed 阻断"
+            : "⚠️ 请求因链不可用被 fail-closed 阻断";
+        }
+        if (auth.reason === "signature_invalid") {
+          return "⛔ 非法签名已被链上验签阻断";
+        }
+        if (auth.reason === "permission_denied") {
+          return isBenignScenario(result)
+            ? "⚠️ 正常请求被链上权限拦截"
+            : "⛔ 攻击已被链上权限阻断";
+        }
+      }
+      if (result.blocked_layer === "guard") {
+        return isBenignScenario(result)
+          ? "⚠️ 正常请求被意图护栏拦截"
+          : "⛔ 攻击已被意图护栏阻断";
+      }
+      if (result.blocked_layer === "state") {
+        return isBenignScenario(result)
+          ? "⚠️ 状态写入触发保护，已被挂起或回滚"
+          : "⛔ 高危写入已被状态防护阻断";
+      }
+      return isBenignScenario(result)
+        ? `⚠️ 正常请求已被 ${blockedLayerLabel(result.blocked_layer)}阻断`
+        : `⛔ 攻击已被成功阻断 (${blockedLayerLabel(result.blocked_layer)}拦截)`;
+    }
+
+    function finalStatusHintText(status, blockedLayer, response, result = null) {
+      const auth = authContext(result, response);
       if (status === "executed") {
+        const deviation = planDeviationHint(result);
+        if (deviation) {
+          return `${deviation} 当前结果不能直接说明对应防线已失效。`;
+        }
+        if (auth.degraded_allowed) {
+          return "链上暂不可用，但该请求属于只读动作，系统按受控降级策略放行执行。";
+        }
+        if (isChainOfflineScenario(result)) {
+          return "该场景用于验证链离线时的只读降级放行，当前执行结果符合预期。";
+        }
         const summary = response && response.result && response.result.summary
           ? `执行结果: ${response.result.summary}`
           : "请求已通过当前防线并被执行";
         return `${summary}。绿色不等于“无需看日志”。`;
       }
       if (status === "blocked") {
-        return blockedLayer ? `请求已在 ${blockedLayer} 层阻断。` : "请求已被系统阻断。";
+        if (blockedLayer === "chain" && auth.chain_available === false) {
+          return `链上网关当前不可用 (${auth.reason || "unknown"})，系统按 fail-closed 策略阻断了本次请求。`;
+        }
+        if (blockedLayer === "chain" && auth.reason === "signature_invalid") {
+          return "请求在链上验签阶段被识别为非法签名，因此未继续执行。";
+        }
+        if (blockedLayer === "chain" && auth.reason === "permission_denied") {
+          return "请求已通过签名校验，但在链上权限校验阶段被拒绝。";
+        }
+        if (blockedLayer === "state") {
+          return "前置防线已放行，但高危状态写入在受保护状态层被挂起或回滚。";
+        }
+        return blockedLayer ? `请求已在 ${blockedLayerLabel(blockedLayer)}层阻断。` : "请求已被系统阻断。";
       }
       if (status === "planning_debug") {
         const planningError = response && response.openclaw_plan && response.openclaw_plan.planning_error
@@ -717,6 +869,29 @@
       return "请结合本次执行日志判断结果。";
     }
 
+    function updateUserTaskOverrideState({ resetToScenario = false } = {}) {
+      const scenario = currentScenario();
+      const useOverride = !!useCustomTaskOverride.checked;
+      userTaskOverride.disabled = !useOverride;
+      if (!useOverride || resetToScenario) {
+        userTaskOverride.value = scenario ? scenario.user_task : "";
+      }
+      userTaskOverrideHelp.textContent = useOverride
+        ? "当前启用自定义覆盖。运行请求会发送这里的内容；切换场景不会自动污染默认任务。"
+        : "当前使用场景默认任务。启用覆盖后，运行请求才会发送这里的内容。";
+    }
+
+    function renderUserBubble(scenario) {
+      const userGoal = currentUserGoal();
+      chatContainer.innerHTML = `
+        <div class="chat-system">已加载场景: ${escapeHtml(scenario.title)}</div>
+        <div class="chat-bubble chat-user">
+          <strong><i class="fa-solid fa-user"></i> 用户输入指令:</strong><br/>
+          ${escapeHtml(userGoal)}
+        </div>
+      `;
+    }
+
     // --- 场景卡片选择 ---
     function selectScenario(id) {
       document.querySelectorAll('.scenario-card').forEach(card => card.classList.remove('active'));
@@ -730,15 +905,8 @@
           scenario_id: id,
           scenario_title: scenario.title,
         });
-        userTaskOverride.value = scenario.user_task;
-        // 清空终端聊天
-        chatContainer.innerHTML = `
-          <div class="chat-system">已加载场景: ${escapeHtml(scenario.title)}</div>
-          <div class="chat-bubble chat-user">
-            <strong><i class="fa-solid fa-user"></i> 用户输入指令:</strong><br/>
-            ${escapeHtml(scenario.user_task)}
-          </div>
-        `;
+        updateUserTaskOverrideState({ resetToScenario: !useCustomTaskOverride.checked });
+        renderUserBubble(scenario);
       }
       resetPipeline();
     }
@@ -758,6 +926,7 @@
       currentRunLog.textContent = "等待执行。运行后会在这里展示本次请求的结论、步骤日志和审计锚点。";
       liveRunLines = [];
       modeCompareContainer.style.display = "none";
+      modeCompare.innerHTML = "";
       
       // Reset details
       guardDecision.className = "tag neutral"; guardDecision.textContent = "N/A";
@@ -797,12 +966,20 @@
             ? "Planning: debug capture only"
             : item.planning_failed
             ? `Planning: ${item.planning_failed_reason || "failed"}`
-            : (item.blocked_layer ? `Layer: ${item.blocked_layer}` : "Fully Executed");
+            : (item.blocked_layer ? `Layer: ${blockedLayerLabel(item.blocked_layer)}` : "Fully Executed");
           return compareCard(`[${item.mode}]`, status, detail);
         }).join("");
       } else {
         modeCompareContainer.style.display = "none";
       }
+    }
+
+    function planningFailureReason(result) {
+      if (!result) return "";
+      return result.planning_failed_reason
+        || (result.openclaw_plan && result.openclaw_plan.planning_error)
+        || (result.openclaw_plan && result.openclaw_plan.raw_response ? "OpenClaw 返回了不可解析的原始输出" : "")
+        || "OpenClaw 未返回可执行计划";
     }
 
     function formatJsonBlock(value) {
@@ -964,6 +1141,7 @@
         planning_source: result.openclaw_plan && result.openclaw_plan.planning_source,
         planning_valid: result.openclaw_plan && result.openclaw_plan.planning_valid,
         planning_error: result.openclaw_plan && result.openclaw_plan.planning_error,
+        planning_failed_reason: result.planning_failed_reason,
         plan_hash: result.openclaw_plan && result.openclaw_plan.plan_hash,
         planning_session_id: result.openclaw_plan && result.openclaw_plan.planning_session_id,
         trace_events: fullTimeline.length
@@ -979,6 +1157,11 @@
           <span style="color:var(--text-muted);">${headerSuffix}</span>
         </div>
         <div style="margin-bottom:10px; color:var(--text-secondary);">${escapeHtml(executionHint)}</div>
+        ${result.final_status === "planning_failed" ? `
+          <div style="margin-bottom:10px; padding:10px 12px; border-left:4px solid var(--color-danger); background:#fff5f5; color:#991b1b;">
+            <strong>规划失败原因:</strong> ${escapeHtml(planningFailureReason(result))}
+          </div>
+        ` : ""}
         <div class="evidence-title" style="margin-top:0;">完整链路日志</div>
         <div style="margin-top:8px;">${renderTraceTimeline(fullTimeline)}</div>
         <div class="evidence-title" style="margin-top:12px;">运行摘要</div>
@@ -989,15 +1172,17 @@
     // --- 核心渲染：防御解析 (证据层加强) ---
     function renderDefenseSummary(result) {
       const lastTrace = result.traces[result.traces.length - 1];
+      const presentation = result.presentation || {};
+      const xray = presentation.xray || {};
       if (!lastTrace) {
         demoFinalStatus.className = pillClass(result.final_status);
-        demoFinalStatus.textContent = finalStatusText(result.final_status, result.blocked_layer);
-        demoFinalHint.textContent = finalStatusHintText(result.final_status, result.blocked_layer, result);
+        demoFinalStatus.textContent = presentation.final_status_text || finalStatusText(result.final_status, result.blocked_layer);
+        demoFinalHint.textContent = presentation.final_hint_text || finalStatusHintText(result.final_status, result.blocked_layer, result, result);
         if (result.final_status === "planning_failed" || result.final_status === "planning_debug") {
           const isDebug = result.final_status === "planning_debug";
-          pipeGuard.className = `pipe-node ${isDebug ? 'warning' : 'danger'}`; pStatusGuard.textContent = isDebug ? "规划诊断" : "规划失败";
-          pipeChain.className = "pipe-node skipped"; pStatusChain.textContent = "未到达";
-          pipeSandbox.className = "pipe-node skipped"; pStatusExec.textContent = "未执行";
+          pipeGuard.className = `pipe-node ${isDebug ? 'warning' : 'danger'}`; pStatusGuard.textContent = xray.guard_status || (isDebug ? "规划诊断" : "规划失败");
+          pipeChain.className = "pipe-node skipped"; pStatusChain.textContent = xray.chain_status || "未到达";
+          pipeSandbox.className = "pipe-node skipped"; pStatusExec.textContent = xray.sandbox_status || "未执行";
           guardDecision.className = `tag ${isDebug ? 'warn' : 'bad'}`; guardDecision.textContent = result.final_status;
           guardReason.textContent = JSON.stringify(result.openclaw_plan || {}, null, 2);
           chainReason.textContent = isDebug ? "诊断模式已在规划阶段截停，未进入链上验权。" : "规划阶段失败，未进入链上验权。";
@@ -1023,7 +1208,7 @@
       } else {
         const isGuardBlocked = blockedLayer === "guard";
         pipeGuard.className = `pipe-node ${isGuardBlocked ? 'danger' : 'success'}`;
-        pStatusGuard.textContent = isGuardBlocked ? "已拦截" : "已放行";
+        pStatusGuard.textContent = xray.guard_status || (isGuardBlocked ? "已拦截" : "已放行");
         
         guardDecision.className = `tag ${isGuardBlocked ? 'bad' : 'ok'}`;
         guardDecision.textContent = guard.decision_stage || (isGuardBlocked ? "拦截" : "放行");
@@ -1042,21 +1227,31 @@
       // 2. Chain Auth Layer
       if (mode === "off" || mode === "guard_only") {
         pipeChain.className = "pipe-node skipped"; pStatusChain.textContent = "已关闭";
+        chainVerified.className = "tag neutral";
+        chainVerified.textContent = "N/A";
+        chainAllowed.className = "tag neutral";
+        chainAllowed.textContent = "N/A";
+        chainAuditStatus.textContent = "未启用";
         chainReason.textContent = "当前模式未启用链上验权。";
       } else if (blockedLayer === "guard") {
         pipeChain.className = "pipe-node skipped"; pStatusChain.textContent = "未到达";
+        chainVerified.className = "tag neutral";
+        chainVerified.textContent = "N/A";
+        chainAllowed.className = "tag neutral";
+        chainAllowed.textContent = "N/A";
+        chainAuditStatus.textContent = "未到达";
         chainReason.textContent = "请求已在第一层被阻断，未进入 FISCO BCOS 网关。";
       } else {
         if (chainUnavailable) {
           pipeChain.className = `pipe-node ${chainDegradedAllowed ? 'success' : 'danger'}`;
-          pStatusChain.textContent = chainDegradedAllowed ? "链降级放行" : "链不可用";
+          pStatusChain.textContent = xray.chain_status || (chainDegradedAllowed ? "链降级放行" : "链不可用");
           chainVerified.className = "tag warn";
           chainVerified.textContent = "链不可用";
           chainAllowed.className = `tag ${chainDegradedAllowed ? 'warn' : 'bad'}`;
           chainAllowed.textContent = chainDegradedAllowed ? "只读降级" : "未放行";
         } else {
           pipeChain.className = `pipe-node ${chainBlocked ? 'danger' : 'success'}`;
-          pStatusChain.textContent = chainBlocked ? "验权失败" : "校验通过";
+          pStatusChain.textContent = xray.chain_status || (chainBlocked ? "验权失败" : "校验通过");
           chainVerified.className = `tag ${auth.verified ? 'ok' : 'bad'}`;
           chainVerified.textContent = auth.verified ? "合法" : "无效";
           chainAllowed.className = `tag ${auth.permission_allowed ? 'ok' : 'bad'}`;
@@ -1070,14 +1265,23 @@
 
       // 3. Sandbox / State Execution Layer
       if (blockedLayer === "guard" || blockedLayer === "chain") {
-        pipeSandbox.className = "pipe-node danger"; pStatusExec.textContent = "被阻断";
+        pipeSandbox.className = "pipe-node skipped"; pStatusExec.textContent = xray.sandbox_status || "未执行";
+      } else if (blockedLayer === "state") {
+        pipeSandbox.className = "pipe-node danger";
+        if (state.approval_status === "rejected") {
+          pStatusExec.textContent = xray.sandbox_status || "审批拒绝";
+        } else if (state.rollback_performed) {
+          pStatusExec.textContent = xray.sandbox_status || "已回滚";
+        } else {
+          pStatusExec.textContent = xray.sandbox_status || "待审批";
+        }
       } else {
-        pipeSandbox.className = "pipe-node success"; pStatusExec.textContent = "执行完成";
+        pipeSandbox.className = "pipe-node success"; pStatusExec.textContent = xray.sandbox_status || "执行完成";
       }
       
       demoFinalStatus.className = pillClass(finalStatus);
-      demoFinalStatus.textContent = finalStatusText(finalStatus, blockedLayer);
-      demoFinalHint.textContent = finalStatusHintText(finalStatus, blockedLayer, response);
+      demoFinalStatus.textContent = presentation.final_status_text || finalStatusText(finalStatus, blockedLayer);
+      demoFinalHint.textContent = presentation.final_hint_text || finalStatusHintText(finalStatus, blockedLayer, response, result);
 
       // 4. State Diff Rendering
       if (state.target) {
@@ -1112,6 +1316,8 @@
       const oracle = document.getElementById("verdict-oracle");
       const planner = document.getElementById("verdict-planner");
       const compareNote = document.getElementById("verdict-compare-note");
+      const deviation = planDeviationHint(result);
+      const presentation = result.presentation || {};
 
       if (!board) return;
       board.style.display = "flex";
@@ -1122,19 +1328,31 @@
         board.classList.add("success");
         icon.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
         statusText = result.scenario.scenario_type === "benign" ? "✅ 正常请求：执行成功" : "⚠️ 危险：攻击已被越权执行";
-        if (result.scenario.scenario_type !== "benign") {
+        if (isChainOfflineScenario(result)) {
+          board.classList.remove("success");
+          board.classList.add("blocked");
+          icon.innerHTML = '<i class="fa-solid fa-link-slash"></i>';
+          statusText = "🛟 链离线下已按只读降级策略放行";
+        } else if (result.scenario.scenario_type !== "benign") {
            board.classList.remove("success");
            board.classList.add("danger");
            icon.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
         }
+        if (deviation) {
+          board.classList.remove("success");
+          board.classList.remove("danger");
+          board.classList.add("blocked");
+          icon.innerHTML = '<i class="fa-solid fa-route"></i>';
+          statusText = "⚠️ 本次实验未触发预期危险动作";
+        }
       } else if (result.final_status === "blocked") {
         board.classList.add("blocked");
         icon.innerHTML = '<i class="fa-solid fa-shield"></i>';
-        statusText = `⛔ 攻击已被成功阻断 (${result.blocked_layer === 'guard' ? '意图护栏拦截' : '链上权限拦截'})`;
+        statusText = blockedVerdictText(result);
       } else if (result.final_status === "planning_failed") {
         board.classList.add("danger");
         icon.innerHTML = '<i class="fa-solid fa-plug-circle-xmark"></i>';
-        statusText = "❌ OpenClaw 规划失败，正式链路已 fail-closed";
+        statusText = `❌ OpenClaw 规划失败，正式链路已 fail-closed (${planningFailureReason(result)})`;
       } else if (result.final_status === "planning_debug") {
         board.classList.add("blocked");
         icon.innerHTML = '<i class="fa-solid fa-flask"></i>';
@@ -1145,16 +1363,18 @@
         statusText = "❌ 系统执行异常";
       }
       
-      title.textContent = statusText;
-      summary.textContent = result.evidence_summary || result.summary;
+      title.textContent = presentation.verdict_title || statusText;
+      summary.textContent = presentation.verdict_summary || (result.final_status === "planning_failed"
+        ? planningFailureReason(result)
+        : (deviation || result.evidence_summary || result.summary));
       
       if (result.plan_assessment && result.plan_assessment.matches_oracle !== undefined) {
          if (result.plan_assessment.matches_oracle) {
             oracle.className = "tag ok";
             oracle.innerHTML = '<i class="fa-solid fa-check"></i> 行为符合实验预期';
          } else {
-            oracle.className = "tag bad";
-            oracle.innerHTML = '<i class="fa-solid fa-xmark"></i> 行为偏离实验预期';
+            oracle.className = "tag warn";
+            oracle.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> 行为偏离实验预期';
          }
       }
       
@@ -1165,6 +1385,7 @@
       
       if (result.mode_compare && result.mode_compare.length > 0) {
          compareNote.style.display = "inline-block";
+         compareNote.textContent = "跨模式复放，仅供对照";
       } else {
          compareNote.style.display = "none";
       }
@@ -1260,7 +1481,7 @@
           session_id: activeLiveSessionId,
           planner_mode: plannerMode.value,
           include_mode_compare: true, // 开启三模式对比证据
-          user_task_override: userTaskOverride.value || null
+          user_task_override: useCustomTaskOverride.checked ? (userTaskOverride.value.trim() || null) : null
         };
         const result = await postJson("/api/demo/run", payload);
         
@@ -1588,6 +1809,25 @@
 
     document.getElementById("clear-approval-token").addEventListener("click", () => {
       document.getElementById("approval-token").value = "";
+    });
+
+    useCustomTaskOverride.addEventListener("change", () => {
+      updateUserTaskOverrideState({ resetToScenario: !useCustomTaskOverride.checked });
+      const scenario = currentScenario();
+      if (scenario) renderUserBubble(scenario);
+    });
+
+    resetUserTaskOverride.addEventListener("click", () => {
+      useCustomTaskOverride.checked = false;
+      updateUserTaskOverrideState({ resetToScenario: true });
+      const scenario = currentScenario();
+      if (scenario) renderUserBubble(scenario);
+    });
+
+    userTaskOverride.addEventListener("input", () => {
+      if (!useCustomTaskOverride.checked) return;
+      const scenario = currentScenario();
+      if (scenario) renderUserBubble(scenario);
     });
     
     document.getElementById("state-target").addEventListener("change", async () => {

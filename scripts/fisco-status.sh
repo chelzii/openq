@@ -6,15 +6,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 NODES_DIR="${ROOT_DIR}/runtime-deps/fisco-portable/nodes/127.0.0.1"
 
+source "${SCRIPT_DIR}/fisco-common.sh"
+
 if [[ ! -d "${NODES_DIR}" ]]; then
     echo "[ERROR] 缺少链目录 ${NODES_DIR}"
     exit 1
 fi
 
-bash "${SCRIPT_DIR}/ensure-docker.sh"
-
-echo "[INFO] 运行中的 FISCO 容器"
-docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' | grep -E 'fiscobcos|NAMES' || true
+mode=$(fisco_mode)
+if [[ "${mode}" == "docker" ]]; then
+    echo "[INFO] 运行中的 FISCO 容器"
+    docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' | grep -E 'fiscobcos|NAMES' || true
+else
+    echo "[INFO] 本地 FISCO 进程"
+    for idx in 0 1 2 3; do
+        node_dir="${NODES_DIR}/node${idx}"
+        pid_file=$(local_pid_file "${node_dir}")
+        if is_local_node_running "${node_dir}"; then
+            echo "node${idx}: running pid=$(cat "${pid_file}")"
+        else
+            echo "node${idx}: stopped"
+        fi
+    done
+fi
 
 echo
 echo "[INFO] SDK 证书目录"

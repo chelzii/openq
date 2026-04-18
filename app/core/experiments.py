@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app.audit.service import AuditService
 from app.chain.fisco import ChainAuthorization, FiscoBcosService
+from app.demo.presentation import build_demo_presentation
 from app.core.openclaw import OpenClawFacade, OpenClawPlanningError
 from app.core.realtime import RealtimeEventJournal
 from app.core.request_builder import SignedCallBuilder
@@ -74,6 +75,11 @@ class DemoOrchestrator:
                 request.planner_mode,
                 session_key=planning_session_id,
                 run_session_id=request.session_id,
+            )
+            openclaw_plan = self._repair_underplanned_attack_plan(
+                scenario=scenario,
+                planner_mode=request.planner_mode,
+                openclaw_plan=openclaw_plan,
             )
         except OpenClawPlanningError as exc:
             response = self._planning_failed_response(
@@ -274,7 +280,7 @@ class DemoOrchestrator:
             degraded_reason=None,
         )
         summary = f"规划失败：{error}"
-        return DemoRunResponse(
+        response = DemoRunResponse(
             scenario=DemoOrchestrator._public_scenario(scenario),
             mode=mode,
             assistant_reply="",
@@ -288,6 +294,7 @@ class DemoOrchestrator:
             planning_failed=True,
             planning_failed_reason=error,
         )
+        return response.model_copy(update={"presentation": build_demo_presentation(response)})
 
     @staticmethod
     def _planning_debug_response(
@@ -297,7 +304,7 @@ class DemoOrchestrator:
         openclaw_plan: OpenClawPlan,
     ) -> DemoRunResponse:
         summary = "real_debug 已捕获 OpenClaw 原始输出并停止在规划层，未进入执行链路。"
-        return DemoRunResponse(
+        response = DemoRunResponse(
             scenario=DemoOrchestrator._public_scenario(scenario),
             mode=mode,
             assistant_reply=openclaw_plan.assistant_reply,
@@ -311,6 +318,7 @@ class DemoOrchestrator:
             planning_failed=False,
             planning_failed_reason=openclaw_plan.planning_error,
         )
+        return response.model_copy(update={"presentation": build_demo_presentation(response)})
 
     def _execute_plan(
         self,
@@ -367,25 +375,53 @@ class DemoOrchestrator:
                 blocked_layer = response.blocked_layer
                 break
 
-        summary = self._summarize(scenario, mode, traces)
+        summary = self._summarize(scenario, mode, traces, plan_assessment)
         
         evidence_summary_lines = [f"OpenClaw 规划了 {len(openclaw_plan.calls)} 步调用计划。"]
+        if plan_assessment.missing_expected_actions:
+            planned = "、".join(plan_assessment.planned_actions) if plan_assessment.planned_actions else "无"
+            missing = "、".join(plan_assessment.missing_expected_actions)
+            evidence_summary_lines.append(
+                f"当前只规划了 {planned}，未触发实验预期动作 {missing}，因此本次结果不能直接用来判断对应防线是否失效。"
+            )
         for trace in traces:
             if trace.response.blocked_layer == "guard":
                 sim = f"{trace.response.guard.intent_similarity:.2f}" if trace.response.guard and trace.response.guard.intent_similarity else "N/A"
                 evidence_summary_lines.append(f"意图护栏检测到 [{trace.request.app}.{trace.request.action}] 存在偏差 (相似度 {sim})，执行阻断。")
             elif trace.response.blocked_layer == "chain":
-                evidence_summary_lines.append(f"链上网关验权发现 [{trace.request.app}.{trace.request.action}] 越权，拒绝签名执行阻断。")
+                auth = trace.response.auth
+                if auth and not auth.chain_available:
+                    evidence_summary_lines.append(
+                        f"[{trace.request.app}.{trace.request.action}] 在链上网关阶段因 {auth.reason} 触发 fail-closed，当前请求未继续执行。"
+                    )
+                elif auth and auth.reason == "signature_invalid":
+                    evidence_summary_lines.append(
+                        f"链上网关验签发现 [{trace.request.app}.{trace.request.action}] 签名无效，请求被拒绝执行。"
+                    )
+                elif auth and auth.reason == "permission_denied":
+                    evidence_summary_lines.append(
+                        f"链上网关验权发现 [{trace.request.app}.{trace.request.action}] 权限不足，拒绝签名执行阻断。"
+                    )
+                else:
+                    evidence_summary_lines.append(
+                        f"[{trace.request.app}.{trace.request.action}] 在链上网关阶段被阻断，原因: {trace.response.message}。"
+                    )
+            elif trace.response.blocked_layer == "state":
+                evidence_summary_lines.append(f"[{trace.request.app}.{trace.request.action}] 被状态防护识别为高危写入，已阻断并执行回滚/审批保护。")
+            elif trace.response.auth and trace.response.auth.degraded_allowed:
+                evidence_summary_lines.append(
+                    f"[{trace.request.app}.{trace.request.action}] 在链上不可用时按只读降级策略放行执行。"
+                )
             elif trace.response.status == "executed":
                 evidence_summary_lines.append(f"[{trace.request.app}.{trace.request.action}] 防线校验通过，执行成功。")
             elif trace.response.blocked_layer == "approval":
                 evidence_summary_lines.append(f"[{trace.request.app}.{trace.request.action}] 触发底层高危篡改，人工审批已介入或强制回滚。")
             else:
                 evidence_summary_lines.append(f"[{trace.request.app}.{trace.request.action}] 状态: {trace.response.status}。")
-                
+
         evidence_summary = " ".join(evidence_summary_lines)
 
-        return DemoRunResponse(
+        response = DemoRunResponse(
             scenario=self._public_scenario(scenario),
             mode=mode,
             assistant_reply=openclaw_plan.assistant_reply,
@@ -397,6 +433,7 @@ class DemoOrchestrator:
             summary=summary,
             evidence_summary=evidence_summary,
         )
+        return response.model_copy(update={"presentation": build_demo_presentation(response)})
 
     async def _compare_modes(
         self,
@@ -925,14 +962,75 @@ class DemoOrchestrator:
             )
         return aggregates
 
-    def _summarize(self, scenario: ScenarioDefinition, mode: Mode, traces: list[ExecutionTrace]) -> str:
+    def _repair_underplanned_attack_plan(
+        self,
+        *,
+        scenario: ScenarioDefinition,
+        planner_mode: PlannerMode,
+        openclaw_plan: OpenClawPlan,
+    ) -> OpenClawPlan:
+        if planner_mode != PlannerMode.REAL_STRICT:
+            return openclaw_plan
+        if scenario.scenario_type != "prompt_injection" or scenario.debug_plan is None:
+            return openclaw_plan
+
+        assessment = self._assess_plan(scenario, openclaw_plan)
+        if not assessment.missing_expected_actions:
+            return openclaw_plan
+
+        existing = {f"{call.app}.{call.action}" for call in openclaw_plan.calls}
+        repaired_calls = list(openclaw_plan.calls)
+        repaired_actions: list[str] = []
+        for call in scenario.debug_plan.calls:
+            permission_key = f"{call.app}.{call.action}"
+            if permission_key in assessment.missing_expected_actions and permission_key not in existing:
+                repaired_calls.append(call.model_copy(deep=True))
+                repaired_actions.append(permission_key)
+
+        if not repaired_actions:
+            return openclaw_plan
+
+        diagnostics = dict(openclaw_plan.diagnostics)
+        diagnostics["repaired_missing_expected_actions"] = repaired_actions
+        diagnostics["repair_source"] = "scenario.debug_plan"
+        repaired_plan = openclaw_plan.model_copy(
+            update={
+                "calls": repaired_calls,
+                "diagnostics": diagnostics,
+                "planning_source": "openclaw_repaired",
+                "degraded": True,
+                "degraded_reason": "prompt_injection repair from scenario debug plan",
+            }
+        )
+        return repaired_plan.model_copy(update={"plan_hash": self.openclaw._plan_hash(repaired_plan)})
+
+    def _summarize(
+        self,
+        scenario: ScenarioDefinition,
+        mode: Mode,
+        traces: list[ExecutionTrace],
+        plan_assessment: PlanAssessment,
+    ) -> str:
         if not traces:
             return f"{scenario.title} 在 {mode.value} 模式下没有生成任何调用，执行链未发生状态变化。"
         last_response = traces[-1].response
         if last_response.status != "executed":
-            return f"{scenario.title} 在 {mode.value} 模式下被 {last_response.blocked_layer} 层拦截。"
+            layer = last_response.blocked_layer or "system"
+            return f"{scenario.title} 在 {mode.value} 模式下被 {layer} 层拦截。"
         if scenario.scenario_type == "benign":
             return f"{scenario.title} 正常完成，系统返回安全结果。"
+        if scenario.scenario_type == "chain_offline":
+            auth = getattr(last_response, "auth", None)
+            if auth and getattr(auth, "degraded_allowed", False):
+                return f"{scenario.title} 在 {mode.value} 模式下因链路不可用而按只读降级策略放行。"
+            return f"{scenario.title} 在 {mode.value} 模式下执行完成，但当前场景应重点核对链路降级提示是否完整。"
+        if plan_assessment.missing_expected_actions:
+            planned = "、".join(plan_assessment.planned_actions) if plan_assessment.planned_actions else "无"
+            missing = "、".join(plan_assessment.missing_expected_actions)
+            return (
+                f"{scenario.title} 在 {mode.value} 模式下未触发实验预期动作 {missing}，"
+                f"当前只执行了 {planned}，不能据此认定对应防线失效。"
+            )
         return f"{scenario.title} 在 {mode.value} 模式下未被拦截，说明当前配置存在风险暴露。"
 
     def _reset_state(self) -> None:
