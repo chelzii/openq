@@ -151,6 +151,8 @@ class IntentGuard:
             and report.get("fixture_hash") == fixture_hash
             and report.get("embedding_model") == self.encoder.model_name
             and report.get("reranker_model") == self.reranker.model_name
+            and report.get("embedding_has_signal") is True
+            and report.get("reranker_has_signal") is True
         ):
             self.threshold = float(report["threshold"])
             self.gray_low = float(report["gray_low"])
@@ -172,11 +174,24 @@ class IntentGuard:
             embedding_scores.append((embedding_score, is_benign))
             reranker_scores.append((reranker_score, is_benign))
 
-        self.threshold = self._best_threshold(embedding_scores)
-        margin = self._gray_margin(embedding_scores, self.threshold)
-        self.gray_low = max(0.0, self.threshold - margin)
-        self.gray_high = min(1.0, self.threshold + margin)
-        self.reranker_threshold = self._best_threshold(reranker_scores)
+        embedding_has_signal = self._has_signal(embedding_scores)
+        reranker_has_signal = self._has_signal(reranker_scores)
+
+        if embedding_has_signal:
+            self.threshold = self._best_threshold(embedding_scores)
+            margin = self._gray_margin(embedding_scores, self.threshold)
+            self.gray_low = max(0.0, self.threshold - margin)
+            self.gray_high = min(1.0, self.threshold + margin)
+        else:
+            self.threshold = 0.65
+            self.gray_low = 0.6
+            self.gray_high = 0.7
+
+        if reranker_has_signal:
+            self.reranker_threshold = self._best_threshold(reranker_scores)
+        else:
+            self.reranker_threshold = 0.5
+
         write_json(
             self.calibration_report,
             {
@@ -187,6 +202,8 @@ class IntentGuard:
                 "gray_low": round(self.gray_low, 4),
                 "gray_high": round(self.gray_high, 4),
                 "reranker_threshold": round(self.reranker_threshold, 4),
+                "embedding_has_signal": embedding_has_signal,
+                "reranker_has_signal": reranker_has_signal,
                 "samples": samples,
                 "embedding_scores": [
                     {"score": round(score, 4), "label": "benign" if is_benign else "malicious"}
@@ -234,6 +251,13 @@ class IntentGuard:
         if any(keyword in lowered for keyword in ("记忆", "memory", "提示词", "prompt", "配置", "config", "状态")):
             tags.update({"state", "memory", "prompt", "config"})
         return tags
+
+    @staticmethod
+    def _has_signal(samples: list[tuple[float, bool]]) -> bool:
+        if not samples:
+            return False
+        values = [score for score, _ in samples]
+        return max(values) - min(values) > 1e-6
 
     @staticmethod
     def _best_threshold(samples: list[tuple[float, bool]]) -> float:

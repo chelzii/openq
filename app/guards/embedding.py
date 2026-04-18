@@ -3,13 +3,62 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import sys
+import types
 from dataclasses import dataclass
+from enum import Enum
+from importlib.machinery import ModuleSpec
 from functools import lru_cache
 from pathlib import Path
 
 from app.core.utils import tokenize
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
+
+
+def _install_torchvision_stub() -> None:
+    try:
+        import torchvision  # type: ignore  # noqa: F401
+        return
+    except Exception:
+        pass
+
+    torchvision_stub = types.ModuleType("torchvision")
+    transforms_stub = types.ModuleType("torchvision.transforms")
+    torchvision_stub.__spec__ = ModuleSpec("torchvision", loader=None)
+    transforms_stub.__spec__ = ModuleSpec("torchvision.transforms", loader=None)
+
+    class InterpolationMode(Enum):
+        NEAREST = 0
+        NEAREST_EXACT = 1
+        BILINEAR = 2
+        BICUBIC = 3
+        BOX = 4
+        HAMMING = 5
+        LANCZOS = 6
+
+    transforms_stub.InterpolationMode = InterpolationMode
+    torchvision_stub.transforms = transforms_stub
+    torchvision_stub.datasets = types.ModuleType("torchvision.datasets")
+    torchvision_stub.io = types.ModuleType("torchvision.io")
+    torchvision_stub.models = types.ModuleType("torchvision.models")
+    torchvision_stub.ops = types.ModuleType("torchvision.ops")
+    torchvision_stub.utils = types.ModuleType("torchvision.utils")
+    torchvision_stub.datasets.__spec__ = ModuleSpec("torchvision.datasets", loader=None)
+    torchvision_stub.io.__spec__ = ModuleSpec("torchvision.io", loader=None)
+    torchvision_stub.models.__spec__ = ModuleSpec("torchvision.models", loader=None)
+    torchvision_stub.ops.__spec__ = ModuleSpec("torchvision.ops", loader=None)
+    torchvision_stub.utils.__spec__ = ModuleSpec("torchvision.utils", loader=None)
+    sys.modules["torchvision"] = torchvision_stub
+    sys.modules["torchvision.transforms"] = transforms_stub
+    sys.modules["torchvision.datasets"] = torchvision_stub.datasets
+    sys.modules["torchvision.io"] = torchvision_stub.io
+    sys.modules["torchvision.models"] = torchvision_stub.models
+    sys.modules["torchvision.ops"] = torchvision_stub.ops
+    sys.modules["torchvision.utils"] = torchvision_stub.utils
+
+
+_install_torchvision_stub()
 
 
 def _local_model_dirs() -> dict[str, Path]:
@@ -97,14 +146,28 @@ class HashingReranker:
 
 
 @lru_cache(maxsize=4)
-def _load_sentence_transformer(model_name: str, device: str):
-    from sentence_transformers import SentenceTransformer
+def _load_embedding_tokenizer(model_name: str):
+    from transformers import AutoTokenizer
 
-    return SentenceTransformer(
+    return AutoTokenizer.from_pretrained(
         _resolve_model_source(model_name),
-        device=device,
+        trust_remote_code=True,
         local_files_only=not _allow_remote_model_download(),
     )
+
+
+@lru_cache(maxsize=4)
+def _load_embedding_model(model_name: str, device: str):
+    from transformers import AutoModel
+
+    model = AutoModel.from_pretrained(
+        _resolve_model_source(model_name),
+        trust_remote_code=True,
+        local_files_only=not _allow_remote_model_download(),
+    )
+    model.to(device)
+    model.eval()
+    return model
 
 
 @lru_cache(maxsize=4)
@@ -155,6 +218,16 @@ def _default_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def _mean_pool_embeddings(model_output, attention_mask):
+    import torch
+
+    token_embeddings = model_output.last_hidden_state
+    mask = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+    summed = torch.sum(token_embeddings * mask, dim=1)
+    denom = torch.clamp(mask.sum(dim=1), min=1e-9)
+    return summed / denom
+
+
 class BGEEmbeddingEncoder:
     def __init__(
         self,
@@ -168,18 +241,27 @@ class BGEEmbeddingEncoder:
 
     @property
     def backend(self) -> str:
-        return f"sentence_transformers:{self.device}"
+        return f"transformers_encoder:{self.device}"
 
     def score(self, left_text: str, right_text: str) -> EmbeddingScore:
         try:
-            model = _load_sentence_transformer(self.model_name, self.device)
-            embeddings = model.encode(
+            import torch
+
+            tokenizer = _load_embedding_tokenizer(self.model_name)
+            model = _load_embedding_model(self.model_name, self.device)
+            inputs = tokenizer(
                 [left_text, right_text],
-                normalize_embeddings=True,
-                convert_to_numpy=True,
-                show_progress_bar=False,
+                padding=True,
+                truncation=True,
+                max_length=512,
+                return_tensors="pt",
             )
-            score = float(embeddings[0].dot(embeddings[1]))
+            inputs = {key: value.to(self.device) for key, value in inputs.items()}
+            with torch.inference_mode():
+                outputs = model(**inputs)
+                embeddings = _mean_pool_embeddings(outputs, inputs["attention_mask"])
+                embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+            score = float((embeddings[0] * embeddings[1]).sum().detach().cpu())
             return EmbeddingScore(score=round(score, 4), model_name=self.model_name, backend=self.backend)
         except Exception:
             return self.fallback.score(left_text, right_text)

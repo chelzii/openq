@@ -704,3 +704,50 @@ h3 { font-size: 1.05rem; font-weight: 600; }
   gap: 8px;
   margin-top: 8px;
 }
+
+/* Top-level Tabs */
+.top-page-tabs {
+  display: inline-flex;
+  background: #e5e7eb;
+  padding: 6px;
+  border-radius: 12px;
+  gap: 8px;
+  margin-bottom: 0; /* Let flex gap handle spacing */
+  align-self: center; /* Center horizontally in flex container */
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+.top-page-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 10px 24px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.top-page-btn:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.5);
+}
+.top-page-btn.active {
+  background: white;
+  color: var(--color-primary);
+  box-shadow: var(--shadow-sm), 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+.top-page-content {
+  display: none;
+  animation: pageFadeIn 0.3s ease-out;
+}
+.top-page-content.active {
+  display: block;
+}
+
+@keyframes pageFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
