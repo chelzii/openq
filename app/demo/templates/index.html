@@ -170,17 +170,6 @@
 
         <button id="run-demo" class="btn btn-primary"><i class="fa-solid fa-play"></i> 触发场景调用</button>
 
-        <!-- 智能体终端 UI 模拟 -->
-        <div class="device-mockup" style="margin-top:24px;">
-          <div class="device-header">
-            <span><i class="fa-solid fa-robot"></i> OpenClaw Assistant</span>
-            <span id="demo-request-id" style="font-size:0.75rem; font-family:var(--font-mono); color:var(--text-muted);">idle</span>
-          </div>
-          <div class="device-body" id="chat-container">
-            <div class="chat-system">系统就绪。请在上方选择场景并点击运行。</div>
-          </div>
-        </div>
-
         <div style="margin-top:20px;">
           <div class="evidence-title"><i class="fa-solid fa-terminal"></i> 本次执行日志</div>
           <div id="current-run-log" class="raw-evidence">等待执行。运行后会在这里展示本次请求的结论、步骤日志和审计锚点。</div>
@@ -190,6 +179,18 @@
 
       <!-- 右侧：上帝安防透视视角 -->
       <div class="right-column">
+
+      <!-- 智能体终端 UI 模拟 -->
+      <div class="device-mockup" style="margin-top:0; margin-bottom:24px;">
+        <div class="device-header">
+          <span><i class="fa-solid fa-robot"></i> OpenClaw Assistant</span>
+          <span id="demo-request-id" style="font-size:0.75rem; font-family:var(--font-mono); color:var(--text-muted);">idle</span>
+        </div>
+        <div class="device-body" id="chat-container">
+          <div class="chat-system">系统就绪。请在上方选择场景并点击运行。</div>
+        </div>
+      </div>
+
       <section class="panel security-panel">
         <div class="security-header">
           <h2><i class="fa-solid fa-satellite-dish"></i> 系统安防透视图 (X-Ray View)</h2>
